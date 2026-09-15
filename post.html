@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>글 불러오는 중... · My Blog</title>
+<link rel="stylesheet" href="css/style.css">
+<script>
+  (function () {
+    var saved = localStorage.getItem('theme');
+    if (saved) document.documentElement.setAttribute('data-theme', saved);
+  })();
+</script>
+</head>
+<body>
+  <header class="site-header">
+    <a class="site-title" href="index.html">My Blog</a>
+    <button id="theme-toggle" class="theme-toggle" aria-label="테마 전환" title="테마 전환">
+      <span class="icon icon-sun">☀️</span>
+      <span class="icon icon-moon">🌙</span>
+    </button>
+  </header>
+
+  <main class="container">
+    <a class="back-link" href="index.html">&larr; 목록으로</a>
+    <article id="post-content" class="post-content">
+      <p class="post-status">글을 불러오는 중...</p>
+    </article>
+  </main>
+
+  <footer class="site-footer">
+    <p>&copy; <span id="year"></span> My Blog</p>
+  </footer>
+
+  <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+  <script src="js/theme.js"></script>
+  <script src="js/markdown.js"></script>
+  <script src="js/post.js"></script>
+</body>
+</html>

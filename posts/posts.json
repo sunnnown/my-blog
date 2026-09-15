@@ -1,0 +1,20 @@
+[
+  {
+    "file": "hello-world.md",
+    "title": "Hello World",
+    "date": "2026-09-10",
+    "excerpt": "이 블로그의 첫 번째 글입니다."
+  },
+  {
+    "file": "vanilla-js-blog.md",
+    "title": "프레임워크 없이 블로그 만들기",
+    "date": "2026-09-14",
+    "excerpt": "React나 Vue 없이 순수 HTML, CSS, JavaScript로 블로그를 만든 이야기."
+  },
+  {
+    "file": "what-i-learned-today.md",
+    "title": "오늘 배운 것",
+    "date": "2026-09-15",
+    "excerpt": "클로드 코드로 블로그를 만들면서 정리한 HTML, CSS, JavaScript의 역할."
+  }
+]
