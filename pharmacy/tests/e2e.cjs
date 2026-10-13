@@ -74,6 +74,7 @@ async function mainFlow(browser) {
   const page = await ctx.newPage();
   const errors = [];
   page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) errors.push('CSP: ' + m.text()); });
 
   await page.goto(BASE);
   check('홈 화면 표시', await page.isVisible('#scan-start'));
@@ -198,7 +199,32 @@ async function mainFlow(browser) {
   await page.screenshot({ path: path.join(OUT, 'records-' + theme + '.png'), fullPage: true });
   await page.click('#theme-toggle');
 
-  check('페이지 스크립트 오류 없음', errors.length === 0, errors);
+  check('페이지 스크립트·CSP 오류 없음', errors.length === 0, errors);
+  await ctx.close();
+}
+
+async function testPageAndServer(browser) {
+  console.log('\n[6] 기기 점검 페이지 · 공개 파일 점검');
+  const ctx = await browser.newContext({ ...mobile, ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  const errors = [];
+  page.on('pageerror', (e) => errors.push(e.message));
+  page.on('console', (m) => { if (/Content Security Policy/i.test(m.text())) errors.push('CSP: ' + m.text()); });
+  await page.goto(BASE + 'test.html');
+  await page.waitForSelector('#samples .sample img');
+  check('test.html 테스트 바코드 ' + samples.length + '개 표시', (await page.$$('#samples .sample')).length === samples.length);
+  check('test.html ZXing 로드됨', (await page.textContent('#diag')).includes('로드됨'));
+  check('test.html 스크립트·CSP 오류 없음', errors.length === 0, errors);
+  check('CSP 메타 태그', !!(await page.$('meta[http-equiv="Content-Security-Policy"]')));
+  // 외부 서버로의 요청이 CSP로 차단되는지
+  const blocked = await page.evaluate(() => fetch('https://example.com/').then(() => false, () => true));
+  check('외부 서버 요청 차단(connect-src)', blocked);
+  if (/localhost:8443/.test(BASE)) {
+    for (const p of ['tools/', '.git/config', 'tools/.cert/key.pem', 'tools/%2Ecert/key.pem', 'test-barcodes/']) {
+      const res = await ctx.request.get(BASE + p);
+      check('로컬 서버가 ' + p + ' 제공 안 함', res.status() === 404, res.status());
+    }
+  }
   await ctx.close();
 }
 
@@ -313,6 +339,7 @@ async function fakeCamera() {
   const browser = await chromium.launch();
   await mainFlow(browser);
   await photoDecode(browser);
+  await testPageAndServer(browser);
   await browser.close();
   await cameraDenied();
   await insecureContext();

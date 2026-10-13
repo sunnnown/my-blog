@@ -10,13 +10,15 @@
 
 스마트폰 브라우저는 **HTTPS 주소에서만 카메라를 허용**합니다. 아래 중 하나로 접속하세요.
 
-### A. GitHub Pages (권장 — 설치 없음, 정식 HTTPS)
+### A. GitHub Pages (권장 — iPhone·Android 공통, 정식 HTTPS, PC 불필요)
 
-1. GitHub 저장소 → **Settings → Pages** → Source: `Deploy from a branch`, Branch: `main` / `(root)` → Save
-2. 1~2분 뒤 스마트폰에서 `https://<GitHub 사용자명>.github.io/my-blog/pharmacy/` 접속
-3. (선택) 브라우저 메뉴 → **홈 화면에 추가**
+이 저장소는 이미 GitHub Pages가 `main` 브랜치 루트에서 배포되고 있습니다(블로그: `https://sunnnown.github.io/my-blog/`).
+`pharmacy/` 폴더가 `main`에 병합되면 1~2분 뒤 아래 주소가 열립니다. 블로그 파일은 바뀌지 않습니다.
 
-페이지 파일만 공개되며, 입력한 입고 데이터는 각 기기 브라우저에만 남고 GitHub로 전송되지 않습니다.
+- 앱: `https://sunnnown.github.io/my-blog/pharmacy/`
+- 기기 점검·테스트 바코드: `https://sunnnown.github.io/my-blog/pharmacy/test.html`
+
+페이지 파일(코드)만 공개되며, 입력한 입고 데이터는 각 기기 브라우저에만 남고 GitHub로 전송되지 않습니다.
 
 ### B. 약국 PC에서 로컬 HTTPS 서버 (같은 Wi-Fi)
 
@@ -28,6 +30,8 @@ python3 pharmacy/tools/serve_https.py          # Windows: py pharmacy\tools\serv
 - 자체 서명 인증서라 처음에 "연결이 비공개로 설정되어 있지 않습니다" 경고가 나옵니다.
   Chrome: **고급 → (안전하지 않음)으로 이동**, Safari: **세부사항 보기 → 이 웹 사이트 방문**.
 - 필요: Python 3.7+, `openssl` (macOS/Linux 기본 포함, Windows는 Git for Windows에 포함 또는 `--openssl 경로`).
+- 인증서·개인키는 `~/.pharmacy-scanner/cert/`에 만들어지며 웹으로 제공되지 않습니다. 서버는 `pharmacy/` 폴더만 제공하고, 폴더 목록과 점(.)으로 시작하는 경로는 404로 막습니다.
+- 같은 Wi-Fi의 누구나 접속할 수 있으니 테스트가 끝나면 Ctrl+C로 종료하세요.
 - PC 방화벽에서 8443 포트 접속을 허용해야 할 수 있습니다.
 - 주의: 로컬 서버 주소(IP·포트)가 바뀌면 브라우저 입장에서는 **다른 사이트**라서 저장된 기록이 보이지 않습니다.
   실사용은 주소가 고정되는 A 방식을 권장합니다.
@@ -75,7 +79,20 @@ cd pharmacy && python3 -m http.server 8000     # http://localhost:8000
 - **백업/복원**: JSON 파일로 저장하고, 복원 시 현재 데이터를 백업 내용으로 **교체**합니다.
 - **전체 삭제**: "삭제"를 입력해야 실행됩니다.
 
-## 3. 파일 구조
+## 3. 보안 점검 (배포 전)
+
+**공개되는 것** — GitHub Pages는 저장소가 공개(public)이므로 `pharmacy/` 폴더의 모든 파일(코드, 테스트 코드, 가짜 테스트 바코드, 도구 스크립트, 이 문서)이 누구에게나 공개됩니다. 비밀번호·API 키·인증서·실제 약국 데이터는 포함되어 있지 않습니다. 검색 노출은 `noindex`로 막지만, 주소를 아는 사람은 열 수 있습니다.
+
+**공개되지 않는 것** — 입고 기록·약품 정보는 각 기기 브라우저의 localStorage에만 저장되고 서버로 전송되지 않습니다. 앱 페이지에는 CSP(`connect-src 'self'`)를 걸어 외부 서버로의 요청과 외부 스크립트 실행을 브라우저가 차단합니다. 카메라 영상도 기기 안에서만 처리합니다.
+
+**남은 위험과 권장 사항**
+- **같은 출처(origin) 공유**: `https://sunnnown.github.io` 아래의 모든 페이지(블로그 포함, 이 계정의 다른 GitHub Pages 저장소 포함)는 같은 localStorage를 공유합니다. 블로그 글 페이지는 외부 CDN(jsDelivr)에서 버전 고정·무결성 검사 없이 `marked`를 불러오므로, 그 CDN 파일이 변조되면 같은 기기에 저장된 입고 기록을 읽을 수 있습니다. **테스트에는 가짜 데이터만 쓰고**, 실제 운영 전에는 전용 도메인(별도 출처)에 배포하는 것을 권장합니다.
+- localStorage는 암호화되지 않습니다. 휴대폰 잠금을 사용하고, 약국 공용 기기라면 사용 후 브라우저를 닫으세요.
+- CSV·백업(JSON) 파일은 평문입니다. 다운로드 폴더나 메신저로 옮길 때 유출에 주의하고, 필요 없으면 삭제하세요.
+- 앱에는 로그인이 없습니다. 휴대폰을 가진 사람은 기록을 보고 고칠 수 있습니다.
+- 로컬 HTTPS 서버의 인증서는 자체 서명입니다. 경고를 넘긴 뒤 접속하는 것이므로 약국 내부 Wi-Fi에서 테스트 용도로만 쓰세요.
+
+## 4. 파일 구조
 
 ```
 pharmacy/
@@ -87,6 +104,7 @@ pharmacy/
   js/csv.js           CSV 생성
   js/scanner.js       카메라·인식 엔진 (BarcodeDetector / ZXing), 사진 인식
   js/app.js           화면·이벤트
+  js/test-page.js     test.html 전용 스크립트
   vendor/             ZXing 0.21.3 UMD (Apache-2.0)
   test-barcodes/      테스트 바코드 (SVG/PNG) + samples.json
   tools/serve_https.py           로컬 HTTPS 서버
@@ -95,7 +113,7 @@ pharmacy/
   tests/e2e.cjs                  브라우저 테스트 (Playwright, 개발용)
 ```
 
-## 4. 테스트
+## 5. 테스트
 
 ```bash
 node --test pharmacy/tests/unit.test.cjs
@@ -107,9 +125,11 @@ NODE_PATH=<playwright가 설치된 node_modules> xvfb-run -a node pharmacy/tests
 ```
 
 e2e는 Pixel 7 화면 크기로 수동 입력→저장→새로고침 유지→검색·수정·삭제→CSV(BOM·한글)→백업·복원,
-사진 인식(4개 형식), 카메라 권한 거부, HTTP 접속 시 안내, Chromium 가상 카메라로 실시간 스캔(4개 형식)을 확인합니다.
+사진 인식(4개 형식), 카메라 권한 거부, HTTP 접속 시 안내, Chromium 가상 카메라로 실시간 스캔(4개 형식),
+CSP 위반 없음·외부 요청 차단, 로컬 서버의 개인키·폴더 목록 비노출을 확인합니다.
+`BASE_URL=http://localhost:8001/my-blog/pharmacy/`처럼 지정하면 GitHub Pages와 같은 하위 경로에서도 확인할 수 있습니다.
 
-## 5. 알려진 제한 · 개선 과제
+## 6. 알려진 제한 · 개선 과제
 
 - **iPhone(Safari)의 7일 규칙**: 홈 화면에 추가하지 않은 사이트는 7일간 사용하지 않으면 저장 데이터가 지워질 수 있습니다. 홈 화면에 추가하고 정기적으로 백업하세요.
 - 데이터가 기기별로 따로 저장되어 여러 기기 간 공유가 되지 않습니다(다음 버전 과제).

@@ -24,10 +24,12 @@ import socket
 import ssl
 import subprocess
 import sys
+import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(HERE)
-CERT_DIR = os.path.join(HERE, ".cert")
+# 인증서·개인키는 제공 폴더(pharmacy/) 밖, 사용자 홈에 둔다 (웹으로 노출되지 않게)
+CERT_DIR = os.path.join(os.path.expanduser("~"), ".pharmacy-scanner", "cert")
 
 
 def lan_ip():
@@ -55,7 +57,7 @@ def find_openssl(explicit):
 
 
 def ensure_cert(ip, openssl):
-    os.makedirs(CERT_DIR, exist_ok=True)
+    os.makedirs(CERT_DIR, mode=0o700, exist_ok=True)
     cert = os.path.join(CERT_DIR, "cert.pem")
     key = os.path.join(CERT_DIR, "key.pem")
     stamp = os.path.join(CERT_DIR, "ip.txt")
@@ -86,9 +88,23 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, directory=APP_DIR, **kwargs)
 
+    def send_head(self):
+        # 점(.)으로 시작하는 경로(.git, .cert 등)는 제공하지 않음
+        parts = urllib.parse.unquote(self.path.split("?", 1)[0].split("#", 1)[0]).split("/")
+        if any(p.startswith(".") for p in parts if p):
+            self.send_error(404)
+            return None
+        return super().send_head()
+
+    def list_directory(self, path):
+        # 폴더 목록 노출 금지 (index.html이 없는 폴더는 404)
+        self.send_error(404)
+        return None
+
     def end_headers(self):
         # 테스트 중 수정한 파일이 바로 반영되도록 캐시 사용 안 함
         self.send_header("Cache-Control", "no-store")
+        self.send_header("X-Content-Type-Options", "nosniff")
         super().end_headers()
 
 
