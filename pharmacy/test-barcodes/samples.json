@@ -1,0 +1,37 @@
+[
+  {
+    "file": "ean13-a",
+    "bcid": "ean13",
+    "text": "2001234567893",
+    "label": "EAN-13 (테스트 약품 A)",
+    "expected": "2001234567893"
+  },
+  {
+    "file": "gs1-datamatrix-a",
+    "bcid": "gs1datamatrix",
+    "text": "(01)02001234567893(17)271231(10)TEST123(21)SN000001",
+    "label": "GS1 DataMatrix (테스트 약품 A · 사용기한 2027-12-31 · 제조번호 TEST123)",
+    "expected": "01020012345678931727123110TEST123<GS>21SN000001"
+  },
+  {
+    "file": "code128",
+    "bcid": "code128",
+    "text": "PBS-TEST-128",
+    "label": "Code 128 (GTIN 없음)",
+    "expected": "PBS-TEST-128"
+  },
+  {
+    "file": "gs1-128-b",
+    "bcid": "gs1-128",
+    "text": "(01)02009876543213(10)LOT42",
+    "label": "GS1-128 (테스트 약품 B · 제조번호 LOT42)",
+    "expected": "010200987654321310LOT42"
+  },
+  {
+    "file": "ean13-b",
+    "bcid": "ean13",
+    "text": "2009876543213",
+    "label": "EAN-13 (테스트 약품 B)",
+    "expected": "2009876543213"
+  }
+]

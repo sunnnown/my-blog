@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="robots" content="noindex">
+<meta name="theme-color" content="#0f766e">
+<title>약국 입고 스캐너 v0.1</title>
+<link rel="stylesheet" href="css/app.css">
+<script>
+  (function () {
+    try {
+      var saved = localStorage.getItem('pbs.theme');
+      if (saved) document.documentElement.setAttribute('data-theme', saved);
+    } catch (e) {}
+  })();
+</script>
+</head>
+<body>
+  <header class="app-header">
+    <div class="app-title">
+      <strong>입고 스캐너</strong>
+      <span class="app-version">v0.1</span>
+    </div>
+    <button id="theme-toggle" class="icon-btn" type="button" aria-label="화면 테마 전환">
+      <span class="theme-label-dark">어둡게</span><span class="theme-label-light">밝게</span>
+    </button>
+  </header>
+
+  <main id="main">
+    <!-- 홈: 바코드 스캔 -->
+    <section class="view" data-view="home" aria-labelledby="home-title">
+      <h1 id="home-title" class="sr-only">바코드 스캔</h1>
+
+      <div class="notice">
+        <strong>입고 기록 보조 도구입니다.</strong>
+        IT3000과 연동되지 않으며, 환자 정보·처방전은 입력하지 마세요.
+      </div>
+
+      <div class="scanner" id="scanner">
+        <video id="video" class="scanner-video" playsinline muted></video>
+        <div class="scanner-guide" aria-hidden="true"></div>
+        <div class="scanner-idle" id="scanner-idle">
+          <p>후면 카메라로 의약품 바코드를 스캔합니다.</p>
+          <p class="muted">EAN-13 · Code 128 · GS1 DataMatrix</p>
+        </div>
+        <div class="scanner-tools" id="scanner-tools" hidden>
+          <button type="button" class="chip" id="torch-btn" hidden aria-pressed="false">조명</button>
+          <label class="zoom" id="zoom-wrap" hidden>확대
+            <input type="range" id="zoom-range" min="1" max="4" step="0.1" value="1">
+          </label>
+        </div>
+      </div>
+      <p class="scanner-status" id="scanner-status" role="status" aria-live="polite"></p>
+      <div class="error-box" id="camera-error" role="alert" hidden></div>
+
+      <div class="btn-row">
+        <button type="button" class="btn btn-primary btn-lg" id="scan-start">바코드 스캔 시작</button>
+        <button type="button" class="btn btn-lg" id="scan-stop" hidden>스캔 중지</button>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">카메라로 인식이 안 될 때</h2>
+        <label class="btn btn-block file-btn">
+          사진 찍어서 인식
+          <input type="file" id="photo-input" accept="image/*" capture="environment">
+        </label>
+        <form id="manual-form" class="manual-form" autocomplete="off">
+          <label for="manual-code">바코드 번호 직접 입력</label>
+          <div class="input-row">
+            <input id="manual-code" name="code" type="text" inputmode="text" enterkeyhint="go"
+                   placeholder="예: 8801234567893 또는 (01)0880…(17)…(10)…" required>
+            <button type="submit" class="btn btn-primary">확인</button>
+          </div>
+          <p class="hint">바코드 아래 숫자 13자리, 또는 GS1 표기를 그대로 입력하세요. 블루투스/USB 바코드 리더기를 연결했다면 이 칸에 바로 스캔해도 됩니다.</p>
+        </form>
+      </div>
+
+      <div class="card">
+        <h2 class="card-title">최근 입고 기록</h2>
+        <ul class="record-list compact" id="recent-list"></ul>
+      </div>
+
+      <p class="engine-info" id="engine-info"></p>
+    </section>
+
+    <!-- 입고 등록 -->
+    <section class="view" data-view="receive" aria-labelledby="receive-title" hidden>
+      <h1 id="receive-title" class="view-title">입고 등록</h1>
+
+      <div id="receive-empty" class="card" hidden>
+        <p>먼저 바코드를 스캔하거나 입력하세요.</p>
+        <a class="btn btn-primary btn-block" href="#home">홈에서 스캔하기</a>
+      </div>
+
+      <form id="receive-form" class="form" novalidate hidden>
+        <fieldset class="card">
+          <legend class="card-title">스캔한 바코드</legend>
+          <dl class="kv">
+            <dt>형식</dt><dd id="scan-format"></dd>
+            <dt>원본 문자열</dt><dd><code id="scan-raw" class="raw"></code></dd>
+            <dt>인식 방법</dt><dd id="scan-source"></dd>
+            <dt>GTIN</dt><dd id="scan-gtin"></dd>
+          </dl>
+          <div id="scan-gs1" class="gs1-table" hidden></div>
+          <ul id="scan-warnings" class="warnings" hidden></ul>
+          <a href="#home" class="link" id="rescan-link">다른 바코드 스캔</a>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend class="card-title">의약품 정보</legend>
+          <p id="product-status" class="status-pill"></p>
+          <div class="field">
+            <label for="f-name">약품명</label>
+            <input id="f-name" name="name" type="text" placeholder="미확인" autocomplete="off">
+          </div>
+          <div class="field">
+            <label for="f-manufacturer">제조사</label>
+            <input id="f-manufacturer" name="manufacturer" type="text" placeholder="미확인" autocomplete="off">
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-packUnit">포장단위</label>
+              <input id="f-packUnit" name="packUnit" type="text" placeholder="예: 30정/병" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="f-it3000Box">IT3000 박스번호</label>
+              <input id="f-it3000Box" name="it3000Box" type="text" placeholder="예: A-12" autocomplete="off">
+            </div>
+          </div>
+          <p class="hint">모르는 항목은 비워 두세요. 빈 칸은 '미확인'으로 저장됩니다. 약품 정보를 고치면 같은 바코드의 모든 입고 기록에 반영됩니다.</p>
+        </fieldset>
+
+        <fieldset class="card">
+          <legend class="card-title">입고 정보</legend>
+          <div class="field">
+            <label for="f-supplier">공급처 <span class="req">필수</span></label>
+            <input id="f-supplier" name="supplier" type="text" list="supplier-list" required autocomplete="off">
+            <datalist id="supplier-list"></datalist>
+          </div>
+          <div class="field">
+            <label for="f-receivedDate">실제 입고 날짜 <span class="req">필수</span></label>
+            <input id="f-receivedDate" name="receivedDate" type="date" required>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-quantity">입고 수량 <span class="req">필수</span></label>
+              <input id="f-quantity" name="quantity" type="number" inputmode="decimal" min="0" step="any" required>
+            </div>
+            <div class="field">
+              <label for="f-unit">단위 <span class="req">필수</span></label>
+              <input id="f-unit" name="unit" type="text" list="unit-list" required autocomplete="off">
+              <datalist id="unit-list">
+                <option value="박스"></option>
+                <option value="통"></option>
+                <option value="병"></option>
+                <option value="개"></option>
+                <option value="정"></option>
+                <option value="캡슐"></option>
+                <option value="포"></option>
+                <option value="앰플"></option>
+                <option value="바이알"></option>
+                <option value="튜브"></option>
+              </datalist>
+            </div>
+          </div>
+          <div class="field-grid">
+            <div class="field">
+              <label for="f-lot">제조번호 <span class="opt">선택</span></label>
+              <input id="f-lot" name="lot" type="text" autocomplete="off">
+            </div>
+            <div class="field">
+              <label for="f-expiry">사용기한 <span class="opt">선택</span></label>
+              <input id="f-expiry" name="expiry" type="date">
+            </div>
+          </div>
+          <p class="hint" id="gs1-prefill-hint" hidden>제조번호·사용기한은 바코드에서 자동으로 채웠습니다. 포장 표기와 같은지 확인하세요.</p>
+          <div class="field">
+            <label for="f-memo">메모 <span class="opt">선택</span></label>
+            <input id="f-memo" name="memo" type="text" autocomplete="off" placeholder="환자 정보는 입력하지 마세요">
+          </div>
+        </fieldset>
+
+        <div class="card confirm-card">
+          <label class="check">
+            <input type="checkbox" id="f-confirm" required>
+            <span>실물 포장의 제품명·규격과 위 정보가 일치하는지 <strong>직접 확인했습니다.</strong></span>
+          </label>
+          <p class="hint">바코드는 잘못 읽힐 수 있습니다. 이 기록은 재고 수량이나 조제 가능 여부를 나타내지 않습니다.</p>
+        </div>
+
+        <div class="error-box" id="form-error" role="alert" hidden></div>
+
+        <div class="btn-row sticky-actions">
+          <button type="button" class="btn" id="receive-cancel">취소</button>
+          <button type="submit" class="btn btn-primary" id="receive-submit">입고 기록 저장</button>
+        </div>
+      </form>
+    </section>
+
+    <!-- 기록 조회 -->
+    <section class="view" data-view="records" aria-labelledby="records-title" hidden>
+      <h1 id="records-title" class="view-title">기록 조회</h1>
+
+      <div class="tabs" role="tablist">
+        <button type="button" role="tab" class="tab" id="tab-receipts" aria-selected="true">입고 기록</button>
+        <button type="button" role="tab" class="tab" id="tab-products" aria-selected="false">약품</button>
+      </div>
+
+      <div class="filters">
+        <input type="search" id="search-q" placeholder="약품명, 바코드, 공급처, 제조번호, 박스번호" aria-label="검색어">
+        <div class="field-grid" id="date-filters">
+          <label class="field">시작일<input type="date" id="search-from"></label>
+          <label class="field">종료일<input type="date" id="search-to"></label>
+        </div>
+        <div id="product-filter" class="filter-chip" hidden>
+          <span id="product-filter-label"></span>
+          <button type="button" class="link" id="product-filter-clear">필터 해제</button>
+        </div>
+      </div>
+
+      <p class="result-count" id="result-count" role="status"></p>
+      <ul class="record-list" id="receipt-list"></ul>
+      <ul class="record-list" id="product-list" hidden></ul>
+      <p class="hint center">입고 기록은 실제 보유 재고 수량이 아닙니다.</p>
+
+      <div class="card">
+        <h2 class="card-title">데이터 관리</h2>
+        <p class="hint" id="storage-info"></p>
+        <label class="check small">
+          <input type="checkbox" id="csv-excel" checked>
+          <span>엑셀용 CSV (바코드 숫자가 지수로 바뀌지 않게 저장)</span>
+        </label>
+        <div class="btn-stack">
+          <button type="button" class="btn" id="export-csv">CSV 내보내기 (현재 검색 결과)</button>
+          <button type="button" class="btn" id="export-backup">백업 파일 저장 (JSON)</button>
+          <label class="btn file-btn">백업 파일에서 복원
+            <input type="file" id="import-backup" accept="application/json,.json">
+          </label>
+          <button type="button" class="btn btn-danger" id="clear-all">모든 데이터 삭제</button>
+        </div>
+        <p class="hint">데이터는 이 기기의 이 브라우저에만 저장됩니다. 브라우저 데이터 삭제, 앱 삭제, 다른 기기 사용 시 기록이 보이지 않으니 정기적으로 백업 파일을 저장하세요.</p>
+      </div>
+    </section>
+  </main>
+
+  <nav class="tabbar" aria-label="주요 화면">
+    <a href="#home" data-nav="home">홈</a>
+    <a href="#receive" data-nav="receive">입고 등록</a>
+    <a href="#records" data-nav="records">기록 조회</a>
+  </nav>
+
+  <div class="toast" id="toast" role="status" aria-live="polite" hidden></div>
+
+  <script src="vendor/zxing-library-0.21.3.min.js"></script>
+  <script src="js/barcode.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/csv.js"></script>
+  <script src="js/scanner.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>

@@ -37,3 +37,11 @@ python3 -m http.server 8000
 ```
 
 Then open `http://localhost:8000`.
+
+## Sub-project: `pharmacy/` (Pharmacy Barcode Scanner)
+
+A separate, self-contained mobile web app living in `pharmacy/` — it shares nothing with the blog (own CSS/JS, own `localStorage` keys prefixed `pbs.`). Same rules apply: vanilla HTML/CSS/JS, no build step. Its one third-party file is ZXing (`pharmacy/vendor/zxing-library-0.21.3.min.js`, Apache-2.0), vendored rather than loaded from a CDN so the scanner works on a LAN-only HTTPS server. See `pharmacy/README.md` for architecture and phone access.
+
+- Unit tests: `node --test pharmacy/tests/unit.test.cjs`
+- Browser tests (dev only, need Playwright): `pharmacy/tests/e2e.cjs`
+- Camera needs HTTPS on phones: `python3 pharmacy/tools/serve_https.py` (self-signed, LAN) or GitHub Pages.
