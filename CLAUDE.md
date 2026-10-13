@@ -44,4 +44,4 @@ A separate, self-contained mobile web app living in `pharmacy/` — it shares no
 
 - Unit tests: `node --test pharmacy/tests/unit.test.cjs`
 - Browser tests (dev only, need Playwright): `pharmacy/tests/e2e.cjs`
-- Camera needs HTTPS on phones: `python3 pharmacy/tools/serve_https.py` (self-signed, LAN) or GitHub Pages.
+- Camera needs HTTPS on phones: `python3 pharmacy/tools/serve_https.py` (local test CA in `~/.pharmacy-scanner/cert`, LAN only; macOS: double-click `pharmacy/tools/start-mac.command`) or GitHub Pages.

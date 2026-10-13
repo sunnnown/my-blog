@@ -20,21 +20,40 @@
 
 페이지 파일(코드)만 공개되며, 입력한 입고 데이터는 각 기기 브라우저에만 남고 GitHub로 전송되지 않습니다.
 
-### B. 약국 PC에서 로컬 HTTPS 서버 (같은 Wi-Fi)
+### B. Mac에서 로컬 서버 + 같은 Wi-Fi의 iPhone (배포 없음)
 
-```bash
-python3 pharmacy/tools/serve_https.py          # Windows: py pharmacy\tools\serve_https.py
-```
+**Mac에서 실행**
+1. 이 브랜치를 Mac에 받습니다 (GitHub에서 브랜치 선택 → Code → Download ZIP 후 압축 해제, 또는 git clone).
+2. Finder에서 `pharmacy/tools/start-mac.command`를 **더블클릭**합니다.
+   - "확인되지 않은 개발자" 경고가 나오면 파일을 **우클릭 → 열기 → 열기**.
+   - Python 설치 창이 뜨면 설치 후 다시 더블클릭합니다.
+   - "python3의 수신 네트워크 연결을 허용하겠습니까?"가 나오면 **허용**.
+3. 터미널 창에 iPhone용 주소(`https://192.168.x.x:8443/…`)와 CA 인증서 지문이 표시됩니다. 창을 닫거나 Ctrl+C를 누르면 서버가 종료됩니다.
 
-- 실행하면 `https://192.168.x.x:8443/` 같은 주소가 나옵니다. 스마트폰에서 그 주소로 접속하세요.
-- 자체 서명 인증서라 처음에 "연결이 비공개로 설정되어 있지 않습니다" 경고가 나옵니다.
-  Chrome: **고급 → (안전하지 않음)으로 이동**, Safari: **세부사항 보기 → 이 웹 사이트 방문**.
-- 필요: Python 3.7+, `openssl` (macOS/Linux 기본 포함, Windows는 Git for Windows에 포함 또는 `--openssl 경로`).
-- 인증서·개인키는 `~/.pharmacy-scanner/cert/`에 만들어지며 웹으로 제공되지 않습니다. 서버는 `pharmacy/` 폴더만 제공하고, 폴더 목록과 점(.)으로 시작하는 경로는 404로 막습니다.
-- 같은 Wi-Fi의 누구나 접속할 수 있으니 테스트가 끝나면 Ctrl+C로 종료하세요.
-- PC 방화벽에서 8443 포트 접속을 허용해야 할 수 있습니다.
-- 주의: 로컬 서버 주소(IP·포트)가 바뀌면 브라우저 입장에서는 **다른 사이트**라서 저장된 기록이 보이지 않습니다.
-  실사용은 주소가 고정되는 A 방식을 권장합니다.
+처음 실행할 때 이 Mac 전용 **로컬 테스트용 CA**를 만들고, 그 CA로 Mac의 현재 내부망 IP(와 `<Mac 이름>.local`)용 서버 인증서를 발급합니다.
+CA·서버 개인키는 `~/.pharmacy-scanner/cert/`(권한 600)에만 있고 웹으로 제공되지 않습니다. 웹에서는 CA **공개** 인증서(`/pharmacy-local-ca.cer`)만 받을 수 있습니다.
+Mac의 IP가 바뀌면 서버 인증서만 자동으로 다시 발급되고, iPhone에 설치한 CA는 그대로 쓸 수 있습니다.
+사설망·이 Mac에서 오는 요청만 받으며, 폴더 목록과 점(.)으로 시작하는 경로는 404로 막습니다.
+
+**iPhone에 CA 인증서 설치 (처음 한 번)**
+1. iPhone Safari에서 터미널에 표시된 `https://<Mac IP>:8443/pharmacy-local-ca.cer`를 엽니다.
+   아직 신뢰 전이라 "이 연결은 비공개 연결이 아닙니다"가 나오면 **세부사항 보기 → 이 웹 사이트 방문 → 웹 사이트 방문**.
+2. "구성 프로파일을 다운로드하려고 합니다"에서 **허용** → "프로파일이 다운로드됨" → 닫기.
+3. **설정** 앱 → 맨 위 **프로파일이 다운로드됨**(또는 일반 → VPN 및 기기 관리) → "Pharmacy Scanner Local Test CA …" → **설치** → 암호 입력 → **설치**.
+   (선택) 같은 화면의 자세한 정보에서 SHA-256 지문이 Mac 터미널에 표시된 지문과 같은지 확인하면, 중간에서 다른 인증서로 바꿔치기되지 않았음을 확인할 수 있습니다.
+4. **설정 → 일반 → 정보 → 인증서 신뢰 설정**(맨 아래) → "Pharmacy Scanner Local Test CA …" **켜기** → 계속.
+5. Safari의 해당 탭을 닫고 다시 `https://<Mac IP>:8443/test.html`을 엽니다. 경고 없이 열리고 "보안 연결(HTTPS): 예"가 보이면 성공입니다.
+6. 앱 `https://<Mac IP>:8443/` → **바코드 스캔 시작** → 카메라 **허용** → Mac 화면에 띄운 테스트 바코드를 스캔합니다.
+
+**테스트가 끝나면 (꼭 정리)**
+- iPhone: **설정 → 일반 → VPN 및 기기 관리** → "Pharmacy Scanner Local Test CA …" → **프로파일 제거** → 암호 입력.
+  설치된 CA는 그 개인키를 가진 사람이 모든 사이트의 인증서를 만들 수 있게 하므로, 테스트 후에는 제거하세요.
+- Mac: 서버 창을 닫고, 다시 쓰지 않을 거면 Finder → 이동 → 폴더로 이동 → `~/.pharmacy-scanner` 폴더를 삭제합니다(CA 개인키 삭제).
+
+참고
+- 공용·손님용 Wi-Fi는 기기 간 접속을 막는 경우가 많습니다. Mac과 iPhone이 같은 공유기의 같은 Wi-Fi(같은 2.4/5GHz 이름)에 있어야 합니다.
+- 주소(IP·포트)가 바뀌면 브라우저 입장에서는 다른 사이트라 이전 테스트 기록이 보이지 않습니다.
+- `python3 pharmacy/tools/serve_https.py`로 직접 실행해도 같습니다 (Windows는 Git for Windows의 openssl 또는 `--openssl 경로`).
 
 ### C. PC에서만 확인
 
@@ -90,7 +109,7 @@ cd pharmacy && python3 -m http.server 8000     # http://localhost:8000
 - localStorage는 암호화되지 않습니다. 휴대폰 잠금을 사용하고, 약국 공용 기기라면 사용 후 브라우저를 닫으세요.
 - CSV·백업(JSON) 파일은 평문입니다. 다운로드 폴더나 메신저로 옮길 때 유출에 주의하고, 필요 없으면 삭제하세요.
 - 앱에는 로그인이 없습니다. 휴대폰을 가진 사람은 기록을 보고 고칠 수 있습니다.
-- 로컬 HTTPS 서버의 인증서는 자체 서명입니다. 경고를 넘긴 뒤 접속하는 것이므로 약국 내부 Wi-Fi에서 테스트 용도로만 쓰세요.
+- 로컬 HTTPS 서버는 Mac에서 만든 로컬 테스트용 CA를 씁니다. CA 개인키(`~/.pharmacy-scanner/cert/ca.key`)가 유출되면 그 CA를 신뢰한 iPhone에서 다른 사이트를 가장할 수 있으므로, 테스트 후 iPhone의 프로파일을 제거하고 Mac의 `~/.pharmacy-scanner`를 삭제하세요.
 
 ## 4. 파일 구조
 
@@ -107,7 +126,8 @@ pharmacy/
   js/test-page.js     test.html 전용 스크립트
   vendor/             ZXing 0.21.3 UMD (Apache-2.0)
   test-barcodes/      테스트 바코드 (SVG/PNG) + samples.json
-  tools/serve_https.py           로컬 HTTPS 서버
+  tools/serve_https.py           로컬 HTTPS 서버 (로컬 테스트용 CA 발급)
+  tools/start-mac.command        macOS에서 더블클릭으로 서버 실행
   tools/make-test-barcodes.mjs   테스트 바코드 생성 (bwip-js, 개발용)
   tests/unit.test.cjs            단위 테스트 (Node 내장 test runner)
   tests/e2e.cjs                  브라우저 테스트 (Playwright, 개발용)

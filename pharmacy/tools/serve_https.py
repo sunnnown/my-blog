@@ -1,35 +1,41 @@
 #!/usr/bin/env python3
 """
-약국 입고 스캐너 – 같은 Wi-Fi의 스마트폰에서 테스트하기 위한 로컬 HTTPS 서버.
+약국 입고 스캐너 – 같은 Wi-Fi의 스마트폰(iPhone Safari 등)에서 테스트하기 위한 로컬 HTTPS 서버.
 
 스마트폰 브라우저는 HTTPS(또는 localhost)에서만 카메라를 허용한다.
-이 스크립트는 PC의 내부망 IP용 자체 서명 인증서를 만들고 pharmacy/ 폴더를 HTTPS로 제공한다.
+이 스크립트는
+  1) 이 컴퓨터 전용 "로컬 테스트용 CA"를 한 번 만들고 (~/.pharmacy-scanner/cert/ca.*)
+  2) 그 CA로 이 컴퓨터의 내부망 IP·<이름>.local 용 서버 인증서를 발급해
+  3) pharmacy/ 폴더를 HTTPS로 제공한다.
+iPhone에 CA 공개 인증서(/pharmacy-local-ca.cer)를 한 번 설치·신뢰하면 경고 없이 접속된다.
+개인키(CA·서버)는 사용자 홈 폴더에만 있고 웹으로 제공되지 않는다.
 
     python3 pharmacy/tools/serve_https.py            # 기본 포트 8443
-    python3 pharmacy/tools/serve_https.py --port 9443
+    (macOS) Finder에서 pharmacy/tools/start-mac.command 더블클릭
 
-필요: Python 3.7+, openssl 명령
-  - macOS/Linux: 기본 설치되어 있음
-  - Windows: Git for Windows에 포함 (C:\\Program Files\\Git\\usr\\bin\\openssl.exe)
-    또는 --openssl 옵션으로 경로 지정
-
-자체 서명 인증서이므로 스마트폰에서 처음 접속할 때 "안전하지 않음" 경고가 뜬다.
-Chrome: [고급] → [... (안전하지 않음)으로 이동], Safari: [세부사항 보기] → [이 웹 사이트 방문].
+필요: Python 3.7+, openssl 명령 (macOS 기본 LibreSSL 포함, Windows는 Git for Windows 또는 --openssl 경로)
+사설망(192.168.x.x, 10.x.x.x, 172.16-31.x.x)과 이 컴퓨터에서 오는 요청만 받는다.
 """
 import argparse
+import hashlib
 import http.server
+import io
+import ipaddress
 import os
 import shutil
 import socket
 import ssl
 import subprocess
 import sys
+import tempfile
+import time
 import urllib.parse
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 APP_DIR = os.path.dirname(HERE)
 # 인증서·개인키는 제공 폴더(pharmacy/) 밖, 사용자 홈에 둔다 (웹으로 노출되지 않게)
 CERT_DIR = os.path.join(os.path.expanduser("~"), ".pharmacy-scanner", "cert")
+CA_DOWNLOAD_PATH = "/pharmacy-local-ca.cer"  # iPhone 설치용 CA 공개 인증서 (DER)
 
 
 def lan_ip():
@@ -56,32 +62,131 @@ def find_openssl(explicit):
     return None
 
 
-def ensure_cert(ip, openssl):
-    os.makedirs(CERT_DIR, mode=0o700, exist_ok=True)
-    cert = os.path.join(CERT_DIR, "cert.pem")
-    key = os.path.join(CERT_DIR, "key.pem")
-    stamp = os.path.join(CERT_DIR, "ip.txt")
-    if os.path.exists(cert) and os.path.exists(key) and os.path.exists(stamp):
-        with open(stamp, encoding="utf-8") as f:
-            if f.read().strip() == ip:
-                return cert, key
+def mac_local_name():
+    """macOS의 Bonjour 이름(<이름>.local). iPhone이 같은 Wi-Fi에서 이 이름으로 찾을 수 있다."""
+    if sys.platform != "darwin":
+        return None
+    try:
+        name = subprocess.run(["scutil", "--get", "LocalHostName"], capture_output=True, text=True, check=True).stdout.strip()
+    except (OSError, subprocess.CalledProcessError):
+        return None
+    return name + ".local" if name else None
+
+
+def _run(openssl, args):
+    r = subprocess.run([openssl] + args, capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit("인증서 생성 실패 (openssl %s):\n%s" % (args[0], r.stderr.strip()))
+
+
+def _write(path, text):
+    with open(path, "w", encoding="utf-8") as f:
+        f.write(text)
+
+
+def _need_openssl(openssl):
     if not openssl:
         sys.exit(
             "openssl 명령을 찾지 못했습니다.\n"
-            "  - Windows: Git for Windows를 설치하거나 --openssl <경로> 로 지정하세요.\n"
-            "  - 또는 README의 'GitHub Pages로 접속' 방법을 사용하세요."
+            "  - Windows: Git for Windows를 설치하거나 --openssl <경로> 로 지정하세요."
         )
-    san = "subjectAltName=IP:%s,IP:127.0.0.1,DNS:localhost" % ip
-    cmd = [
-        openssl, "req", "-x509", "-newkey", "rsa:2048", "-nodes", "-sha256",
-        "-days", "825", "-keyout", key, "-out", cert,
-        "-subj", "/CN=pharmacy-scanner-local", "-addext", san,
-    ]
-    print("자체 서명 인증서 생성:", " ".join(cmd[1:4]), "...")
-    subprocess.run(cmd, check=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-    with open(stamp, "w", encoding="utf-8") as f:
-        f.write(ip)
-    return cert, key
+
+
+def ca_fingerprint(ca_crt):
+    with open(ca_crt, encoding="ascii") as f:
+        der = ssl.PEM_cert_to_DER_cert(f.read())
+    h = hashlib.sha256(der).hexdigest().upper()
+    return " ".join(h[i:i + 2] for i in range(0, len(h), 2))
+
+
+def ensure_ca(openssl):
+    """로컬 테스트용 CA를 한 번만 만든다. (iPhone에 한 번 설치하면 IP가 바뀌어도 계속 쓸 수 있음)"""
+    os.makedirs(CERT_DIR, mode=0o700, exist_ok=True)
+    os.chmod(CERT_DIR, 0o700)
+    ca_key = os.path.join(CERT_DIR, "ca.key")
+    ca_crt = os.path.join(CERT_DIR, "ca.crt")
+    if os.path.exists(ca_key) and os.path.exists(ca_crt):
+        return ca_crt, ca_key
+    _need_openssl(openssl)
+    # 이전 버전의 자체 서명 인증서 정리
+    for old in ("cert.pem", "key.pem", "ip.txt"):
+        try:
+            os.remove(os.path.join(CERT_DIR, old))
+        except OSError:
+            pass
+    host = "".join(c for c in (socket.gethostname() or "local").split(".")[0] if c.isalnum() or c == "-")[:32] or "local"
+    with tempfile.TemporaryDirectory(dir=CERT_DIR) as tmp:
+        cnf = os.path.join(tmp, "ca.cnf")
+        # macOS 기본 LibreSSL은 -subj만 쓰고 [dn]이 비어 있으면 실패하므로 이름을 설정 파일에 넣는다
+        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n"
+                    "O = Pharmacy Scanner Local Test\n"
+                    "CN = Pharmacy Scanner Local Test CA (%s %s)\n"
+                    "[v3_ca]\nbasicConstraints = critical, CA:TRUE, pathlen:0\n"
+                    "keyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n"
+                    % (host, time.strftime("%Y-%m-%d")))
+        old_umask = os.umask(0o077)
+        try:
+            _run(openssl, ["req", "-x509", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256",
+                           "-days", "825", "-config", cnf, "-extensions", "v3_ca",
+                           "-keyout", ca_key, "-out", ca_crt])
+        finally:
+            os.umask(old_umask)
+    os.chmod(ca_key, 0o600)
+    print("로컬 테스트용 CA를 만들었습니다:", ca_crt)
+    return ca_crt, ca_key
+
+
+def ensure_server_cert(openssl, ca_crt, ca_key, ip, dns_names):
+    """CA로 서버 인증서를 발급한다. IP·이름이 바뀌면 다시 발급한다 (CA는 그대로)."""
+    crt = os.path.join(CERT_DIR, "server.crt")
+    key = os.path.join(CERT_DIR, "server.key")
+    stamp = os.path.join(CERT_DIR, "server.txt")
+    ips = [ip] + (["127.0.0.1"] if ip != "127.0.0.1" else [])
+    names = list(dns_names) + ["localhost"]
+    want = "%s|%s|%s" % (",".join(ips), ",".join(names), ca_fingerprint(ca_crt))
+    if os.path.exists(crt) and os.path.exists(key) and os.path.exists(stamp):
+        with open(stamp, encoding="utf-8") as f:
+            have = f.read().strip().split("\n")
+        # 만료 30일 전이면 새로 발급
+        if have[0] == want and len(have) > 1 and float(have[1]) - time.time() > 30 * 86400:
+            return crt, key
+    _need_openssl(openssl)
+    san = ",".join(["IP:" + i for i in ips] + ["DNS:" + n for n in names])
+    days = 397  # Apple 기기의 TLS 서버 인증서 유효기간 권장 상한(398일) 이내
+    with tempfile.TemporaryDirectory(dir=CERT_DIR) as tmp:
+        cnf = os.path.join(tmp, "req.cnf")
+        ext = os.path.join(tmp, "server.ext")
+        csr = os.path.join(tmp, "server.csr")
+        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n"
+                    "O = Pharmacy Scanner Local Test\nCN = %s\n" % (dns_names[0] if dns_names else ip))
+        _write(ext, "basicConstraints = critical, CA:FALSE\n"
+                    "keyUsage = critical, digitalSignature, keyEncipherment\n"
+                    "extendedKeyUsage = serverAuth\n"
+                    "subjectAltName = %s\n"
+                    "subjectKeyIdentifier = hash\n"
+                    "authorityKeyIdentifier = keyid, issuer\n" % san)
+        old_umask = os.umask(0o077)
+        try:
+            _run(openssl, ["req", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256", "-config", cnf,
+                           "-keyout", key, "-out", csr])
+            _run(openssl, ["x509", "-req", "-in", csr, "-CA", ca_crt, "-CAkey", ca_key,
+                           "-set_serial", "0x" + os.urandom(16).hex(), "-sha256", "-days", str(days),
+                           "-extfile", ext, "-out", crt])
+        finally:
+            os.umask(old_umask)
+    os.chmod(key, 0o600)
+    _write(stamp, "%s\n%f\n" % (want, time.time() + days * 86400))
+    print("서버 인증서를 발급했습니다 (%s)" % san)
+    return crt, key
+
+
+def is_local_client(addr):
+    """사설망·루프백·링크로컬 주소에서 온 요청만 허용."""
+    try:
+        a = ipaddress.ip_address(addr)
+    except ValueError:
+        return False
+    return a.is_private or a.is_loopback or a.is_link_local
 
 
 class Handler(http.server.SimpleHTTPRequestHandler):
@@ -89,12 +194,24 @@ class Handler(http.server.SimpleHTTPRequestHandler):
         super().__init__(*args, directory=APP_DIR, **kwargs)
 
     def send_head(self):
+        if self.path.split("?", 1)[0] == CA_DOWNLOAD_PATH:
+            return self.send_ca_cert()
         # 점(.)으로 시작하는 경로(.git, .cert 등)는 제공하지 않음
         parts = urllib.parse.unquote(self.path.split("?", 1)[0].split("#", 1)[0]).split("/")
         if any(p.startswith(".") for p in parts if p):
             self.send_error(404)
             return None
         return super().send_head()
+
+    def send_ca_cert(self):
+        """CA 공개 인증서만 DER로 내려준다 (iOS Safari는 이 형식을 '프로파일'로 받는다). 개인키는 제공하지 않음."""
+        with open(os.path.join(CERT_DIR, "ca.crt"), encoding="ascii") as f:
+            der = ssl.PEM_cert_to_DER_cert(f.read())
+        self.send_response(200)
+        self.send_header("Content-Type", "application/x-x509-ca-cert")
+        self.send_header("Content-Length", str(len(der)))
+        self.end_headers()
+        return io.BytesIO(der)
 
     def list_directory(self, path):
         # 폴더 목록 노출 금지 (index.html이 없는 폴더는 404)
@@ -120,6 +237,10 @@ class TLSServer(http.server.ThreadingHTTPServer):
     def __init__(self, addr, handler, ctx):
         super().__init__(addr, handler)
         self.ctx = ctx
+
+    def verify_request(self, request, client_address):
+        # 외부 인터넷 주소에서 온 연결은 받지 않음 (공유기 포트포워딩 등으로 노출돼도 차단)
+        return is_local_client(client_address[0])
 
     def finish_request(self, request, client_address):
         request.settimeout(30)
@@ -147,18 +268,29 @@ def main():
     args = ap.parse_args()
 
     ip = lan_ip()
-    cert, key = ensure_cert(ip, find_openssl(args.openssl))
+    openssl = find_openssl(args.openssl)
+    ca_crt, ca_key = ensure_ca(openssl)
+    local_name = mac_local_name()
+    cert, key = ensure_server_cert(openssl, ca_crt, ca_key, ip, [local_name] if local_name else [])
 
     ctx = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
     ctx.load_cert_chain(cert, key)
     httpd = TLSServer((args.bind, args.port), Handler, ctx)
 
+    base = "https://%s:%d" % (ip, args.port)
     print()
-    print("  스마트폰(같은 Wi-Fi)에서 접속:  https://%s:%d/" % (ip, args.port))
-    print("  기기 점검·테스트 바코드:        https://%s:%d/test.html" % (ip, args.port))
-    print("  이 PC에서 접속:                https://localhost:%d/" % args.port)
+    print("  ── iPhone (같은 Wi-Fi) ──────────────────────────────")
+    print("  [처음 한 번] 인증서 설치:   %s%s" % (base, CA_DOWNLOAD_PATH))
+    print("               (설치 방법은 pharmacy/README.md 참고)")
+    print("  앱:                         %s/" % base)
+    print("  기기 점검·테스트 바코드:     %s/test.html" % base)
+    if local_name:
+        print("  (IP 대신 이름으로도 접속:   https://%s:%d/)" % (local_name, args.port))
     print()
-    print("  인증서 경고가 나오면 '고급 → 계속 진행'을 선택하세요. 종료: Ctrl+C")
+    print("  CA 인증서 SHA-256 지문 (iPhone 설치 화면의 '자세한 정보'와 같은지 확인):")
+    print("    " + ca_fingerprint(ca_crt))
+    print()
+    print("  내부망(같은 Wi-Fi)에서만 접속됩니다. 테스트가 끝나면 Ctrl+C 또는 이 창을 닫아 종료하세요.")
     try:
         httpd.serve_forever()
     except KeyboardInterrupt:

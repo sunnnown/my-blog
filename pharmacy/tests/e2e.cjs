@@ -220,10 +220,14 @@ async function testPageAndServer(browser) {
   const blocked = await page.evaluate(() => fetch('https://example.com/').then(() => false, () => true));
   check('외부 서버 요청 차단(connect-src)', blocked);
   if (/localhost:8443/.test(BASE)) {
-    for (const p of ['tools/', '.git/config', 'tools/.cert/key.pem', 'tools/%2Ecert/key.pem', 'test-barcodes/']) {
+    for (const p of ['tools/', '.git/config', 'ca.key', 'server.key', '%2E%2E/%2E%2E/.pharmacy-scanner/cert/ca.key', 'test-barcodes/']) {
       const res = await ctx.request.get(BASE + p);
       check('로컬 서버가 ' + p + ' 제공 안 함', res.status() === 404, res.status());
     }
+    const ca = await ctx.request.get(BASE + 'pharmacy-local-ca.cer');
+    const caBody = await ca.body();
+    check('CA 공개 인증서만 제공 (DER)', ca.status() === 200 && ca.headers()['content-type'] === 'application/x-x509-ca-cert' &&
+      caBody[0] === 0x30 && !caBody.toString('latin1').includes('PRIVATE'));
   }
   await ctx.close();
 }
