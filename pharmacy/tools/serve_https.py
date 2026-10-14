@@ -99,14 +99,38 @@ def ca_fingerprint(ca_crt):
     return " ".join(h[i:i + 2] for i in range(0, len(h), 2))
 
 
+# 인증서 Subject 이름은 짧은 고정값 (CN 최대 64자, macOS LibreSSL은 초과 시 생성 실패).
+# 실제 접속 주소(IP·<이름>.local)는 SAN에만 넣는다.
+CA_SUBJECT = "O = Pharmacy Scanner Local Test\nCN = Pharmacy Scanner Local Test CA\n"
+SERVER_SUBJECT = "O = Pharmacy Scanner Local Test\nCN = pharmacy-scanner-local\n"
+
+
+def valid_pair(crt, key):
+    """인증서·개인키 파일이 모두 있고, 읽을 수 있고, 서로 짝이 맞는지."""
+    try:
+        ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER).load_cert_chain(crt, key)
+        return True
+    except (OSError, ssl.SSLError, ValueError):
+        return False
+
+
+def install_pair(tmp_crt, tmp_key, crt, key):
+    """임시 폴더에서 만든 파일을 검증한 뒤 제자리로 옮긴다 (실패해도 반쪽 파일이 남지 않게)."""
+    if not valid_pair(tmp_crt, tmp_key):
+        sys.exit("인증서 생성 결과를 확인하지 못했습니다: " + os.path.basename(crt))
+    os.chmod(tmp_key, 0o600)
+    os.replace(tmp_key, key)
+    os.replace(tmp_crt, crt)
+
+
 def ensure_ca(openssl):
     """로컬 테스트용 CA를 한 번만 만든다. (iPhone에 한 번 설치하면 IP가 바뀌어도 계속 쓸 수 있음)"""
     os.makedirs(CERT_DIR, mode=0o700, exist_ok=True)
     os.chmod(CERT_DIR, 0o700)
     ca_key = os.path.join(CERT_DIR, "ca.key")
     ca_crt = os.path.join(CERT_DIR, "ca.crt")
-    if os.path.exists(ca_key) and os.path.exists(ca_crt):
-        return ca_crt, ca_key
+    if valid_pair(ca_crt, ca_key):
+        return ca_crt, ca_key  # 기존 CA 재사용 (iPhone에 설치한 CA 유지)
     _need_openssl(openssl)
     # 이전 버전의 자체 서명 인증서 정리
     for old in ("cert.pem", "key.pem", "ip.txt"):
@@ -114,24 +138,21 @@ def ensure_ca(openssl):
             os.remove(os.path.join(CERT_DIR, old))
         except OSError:
             pass
-    host = "".join(c for c in (socket.gethostname() or "local").split(".")[0] if c.isalnum() or c == "-")[:32] or "local"
     with tempfile.TemporaryDirectory(dir=CERT_DIR) as tmp:
         cnf = os.path.join(tmp, "ca.cnf")
         # macOS 기본 LibreSSL은 -subj만 쓰고 [dn]이 비어 있으면 실패하므로 이름을 설정 파일에 넣는다
-        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n"
-                    "O = Pharmacy Scanner Local Test\n"
-                    "CN = Pharmacy Scanner Local Test CA (%s %s)\n"
+        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n" + CA_SUBJECT +
                     "[v3_ca]\nbasicConstraints = critical, CA:TRUE, pathlen:0\n"
-                    "keyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n"
-                    % (host, time.strftime("%Y-%m-%d")))
+                    "keyUsage = critical, keyCertSign, cRLSign\nsubjectKeyIdentifier = hash\n")
+        tmp_key, tmp_crt = os.path.join(tmp, "ca.key"), os.path.join(tmp, "ca.crt")
         old_umask = os.umask(0o077)
         try:
             _run(openssl, ["req", "-x509", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256",
                            "-days", "825", "-config", cnf, "-extensions", "v3_ca",
-                           "-keyout", ca_key, "-out", ca_crt])
+                           "-keyout", tmp_key, "-out", tmp_crt])
         finally:
             os.umask(old_umask)
-    os.chmod(ca_key, 0o600)
+        install_pair(tmp_crt, tmp_key, ca_crt, ca_key)
     print("로컬 테스트용 CA를 만들었습니다:", ca_crt)
     return ca_crt, ca_key
 
@@ -144,12 +165,15 @@ def ensure_server_cert(openssl, ca_crt, ca_key, ip, dns_names):
     ips = [ip] + (["127.0.0.1"] if ip != "127.0.0.1" else [])
     names = list(dns_names) + ["localhost"]
     want = "%s|%s|%s" % (",".join(ips), ",".join(names), ca_fingerprint(ca_crt))
-    if os.path.exists(crt) and os.path.exists(key) and os.path.exists(stamp):
+    if valid_pair(crt, key) and os.path.exists(stamp):
         with open(stamp, encoding="utf-8") as f:
             have = f.read().strip().split("\n")
-        # 만료 30일 전이면 새로 발급
-        if have[0] == want and len(have) > 1 and float(have[1]) - time.time() > 30 * 86400:
-            return crt, key
+        # 만료 30일 전이면 새로 발급 (기록 파일이 깨졌으면 새로 발급)
+        try:
+            if have[0] == want and float(have[1]) - time.time() > 30 * 86400:
+                return crt, key
+        except (IndexError, ValueError):
+            pass
     _need_openssl(openssl)
     san = ",".join(["IP:" + i for i in ips] + ["DNS:" + n for n in names])
     days = 397  # Apple 기기의 TLS 서버 인증서 유효기간 권장 상한(398일) 이내
@@ -157,8 +181,8 @@ def ensure_server_cert(openssl, ca_crt, ca_key, ip, dns_names):
         cnf = os.path.join(tmp, "req.cnf")
         ext = os.path.join(tmp, "server.ext")
         csr = os.path.join(tmp, "server.csr")
-        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n"
-                    "O = Pharmacy Scanner Local Test\nCN = %s\n" % (dns_names[0] if dns_names else ip))
+        _write(cnf, "[req]\ndistinguished_name = dn\nprompt = no\n[dn]\n" + SERVER_SUBJECT)
+        tmp_key, tmp_crt = os.path.join(tmp, "server.key"), os.path.join(tmp, "server.crt")
         _write(ext, "basicConstraints = critical, CA:FALSE\n"
                     "keyUsage = critical, digitalSignature, keyEncipherment\n"
                     "extendedKeyUsage = serverAuth\n"
@@ -168,13 +192,13 @@ def ensure_server_cert(openssl, ca_crt, ca_key, ip, dns_names):
         old_umask = os.umask(0o077)
         try:
             _run(openssl, ["req", "-new", "-nodes", "-newkey", "rsa:2048", "-sha256", "-config", cnf,
-                           "-keyout", key, "-out", csr])
+                           "-keyout", tmp_key, "-out", csr])
             _run(openssl, ["x509", "-req", "-in", csr, "-CA", ca_crt, "-CAkey", ca_key,
                            "-set_serial", "0x" + os.urandom(16).hex(), "-sha256", "-days", str(days),
-                           "-extfile", ext, "-out", crt])
+                           "-extfile", ext, "-out", tmp_crt])
         finally:
             os.umask(old_umask)
-    os.chmod(key, 0o600)
+        install_pair(tmp_crt, tmp_key, crt, key)
     _write(stamp, "%s\n%f\n" % (want, time.time() + days * 86400))
     print("서버 인증서를 발급했습니다 (%s)" % san)
     return crt, key
