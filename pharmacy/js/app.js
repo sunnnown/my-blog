@@ -240,10 +240,10 @@
 
     var gs1 = $('scan-gs1');
     if (scan.gs1Fields && scan.gs1Fields.length) {
-      gs1.innerHTML = '<table><thead><tr><th>AI</th><th>항목</th><th>값</th></tr></thead><tbody>' +
+      gs1.innerHTML = '<table><thead><tr><th>AI</th><th>항목</th><th>값</th><th>입력란</th></tr></thead><tbody>' +
         scan.gs1Fields.map(function (f) {
           return '<tr><td>(' + esc(f.ai) + ')</td><td>' + esc(f.label) + '</td><td><code>' + esc(f.value) +
-            '</code>' + (f.iso ? ' → ' + esc(f.iso) : '') + '</td></tr>';
+            '</code>' + (f.iso ? ' → ' + esc(f.iso) : '') + '</td><td>' + (f.autofill ? '자동 입력' : '-') + '</td></tr>';
         }).join('') + '</tbody></table>';
       gs1.hidden = false;
     } else {
@@ -258,6 +258,40 @@
     }
     w.innerHTML = warnings.map(function (m) { return '<li>' + esc(m) + '</li>'; }).join('');
     w.hidden = !warnings.length;
+    renderScanDiag(scan);
+  }
+
+  // 판독기가 돌려준 원문을 그대로 보여 준다 (인쇄된 문자열과 다를 수 있음)
+  var TERM_LABELS = { fixed: '고정 길이', gs: 'GS 구분자', end: '원문 끝', paren: '괄호 표기' };
+
+  function renderScanDiag(scan) {
+    var raw = String(scan.raw || '');
+    var codes = [];
+    for (var i = 0; i < raw.length; i++) codes.push(('0' + raw.charCodeAt(i).toString(16).toUpperCase()).slice(-2));
+    var gsCount = (raw.match(/\u001d/g) || []).length;
+    var off = scan.gs1Offset || 0;
+    var rows = (scan.gs1Fields || []).map(function (f) {
+      var where = f.start == null ? '-' : (f.start + off) + '–' + (f.end + off - 1);
+      return '<tr><td>(' + esc(f.ai) + ')</td><td><code>' + esc(f.value) + '</code></td><td>' + where + '</td><td>' +
+        esc(TERM_LABELS[f.term] || '-') + (f.certain === false ? ' · 경계 불확실' : '') + (f.duplicate ? ' · 중복' : '') +
+        '</td><td>' + (f.autofill ? '자동 입력' : '-') + '</td></tr>';
+    }).join('');
+    var report = JSON.stringify({
+      raw: raw,
+      format: scan.formatLabel || scan.format,
+      source: scan.source,
+      fields: (scan.gs1Fields || []).map(function (f) { return [f.ai, f.value, f.term]; })
+    });
+    $('scan-diag-body').innerHTML =
+      '<dl class="kv">' +
+      '<dt>원문 길이</dt><dd>' + raw.length + '자</dd>' +
+      '<dt>GS(FNC1) 구분자</dt><dd>' + gsCount + '개' + (scan.gs1Offset ? ' · 앞 표식 ' + scan.gs1Offset + '자' : '') + '</dd>' +
+      '<dt>원문</dt><dd><code class="raw">' + esc(B.visibleRaw(raw)) + '</code></dd>' +
+      '<dt>문자 코드(16진)</dt><dd><code class="raw">' + esc(codes.join(' ')) + '</code></dd>' +
+      '</dl>' +
+      (rows ? '<div class="gs1-table"><table><thead><tr><th>AI</th><th>값</th><th>위치</th><th>끝 판단</th><th>입력란</th></tr></thead><tbody>' +
+        rows + '</tbody></table></div>' : '') +
+      '<label class="diag-copy">문제 보고용 (길게 눌러 복사)<textarea readonly rows="3">' + esc(report) + '</textarea></label>';
   }
 
   function setProductStatus(product, isNew) {

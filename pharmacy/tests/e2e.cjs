@@ -248,6 +248,15 @@ async function photoDecode(browser) {
     const fmt = await page.textContent('#scan-format');
     const raw = await page.textContent('#scan-raw');
     check(s.file + ' → ' + fmt + ' / ' + raw, raw.replace(/^<GS>|^\][A-Za-z]\d/, '') === s.expected, s.expected);
+    // 회귀: 일련번호(21)만 있으면 제조번호를 채우지 않고, (10)이 있으면 그 값만 채운다
+    const lotWant = { 'gs1-datamatrix-serial-only': '', 'gs1-datamatrix-lot-serial': '6020' }[s.file];
+    if (lotWant !== undefined) {
+      const lot = await page.inputValue('#f-lot');
+      const exp = await page.inputValue('#f-expiry');
+      check(s.file + ' 입력란: 제조번호 "' + lot + '", 사용기한 ' + exp, lot === lotWant && exp === '2029-06-22', { lotWant });
+      const diag = await page.textContent('#scan-diag-body');
+      check(s.file + ' 진단 정보에 원문·문자 코드 표시', diag.includes('912602005643') && diag.includes('문자 코드') && diag.includes('1D'));
+    }
     await page.click('#receive-cancel');
   }
   await ctx.close();

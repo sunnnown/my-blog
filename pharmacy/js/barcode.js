@@ -133,6 +133,7 @@
     var warnings = [];
     var fields = [];
     var map = {};
+    var dupes = {};
     var data = input;
 
     // 사람이 읽는 형식: (01)08801234567890(17)271231(10)AB12
@@ -142,13 +143,11 @@
       while ((mm = re.exec(data))) {
         var d = aiDef(mm[1]);
         var v = mm[2].trim();
-        fields.push({ ai: mm[1], label: d ? d.label : '알 수 없는 AI', value: v });
-        map[mm[1]] = v;
+        addField({ ai: mm[1], label: d ? d.label : '알 수 없는 AI', value: v, start: mm.index, end: re.lastIndex, term: 'paren' });
       }
       return finish();
     }
 
-    var hasSeparator = data.indexOf(GS) !== -1;
     var pos = 0;
     while (pos < data.length) {
       if (data.charAt(pos) === GS) { pos++; continue; }
@@ -158,12 +157,15 @@
         break;
       }
       var def = aiDef(ai);
+      var start = pos;
       pos += ai.length;
       var value;
+      var term;
       if (def.fixed) {
         value = data.substr(pos, def.fixed);
         pos += def.fixed;
         if (value.length !== def.fixed) warnings.push('(' + ai + ') 길이가 맞지 않습니다.');
+        term = 'fixed';
         // 고정 길이 뒤에 GS가 와도 허용
       } else {
         var end = data.indexOf(GS, pos);
@@ -172,16 +174,25 @@
         if (value.length > def.max) {
           warnings.push('(' + ai + ') 값이 최대 길이(' + def.max + ')보다 깁니다. 구분자가 빠졌을 수 있습니다.');
         }
-        if (!hasSeparator && end === data.length && fields.length > 0 && value.length > 12 && value.length <= def.max) {
-          // 구분자(GS)가 빠진 채 읽히면 제조번호와 일련번호가 하나로 붙을 수 있다 (긴 값만 경고)
-          warnings.push('(' + ai + ') ' + def.label + '에 다른 항목이 섞였을 수 있습니다. 포장 표기와 대조하세요.');
-        }
+        // 가변 길이 값은 GS 또는 원문 끝에서만 끝난다. 임의로 자르지 않는다.
+        term = end === data.length ? 'end' : 'gs';
         pos = end;
       }
-      fields.push({ ai: ai, label: def.label, value: value });
-      map[ai] = value;
+      addField({ ai: ai, label: def.label, value: value, start: start, end: pos, term: term });
     }
     return finish();
+
+    // 같은 AI가 두 번 나오면 어느 값이 맞는지 알 수 없으므로 map에 넣지 않고 표시만 한다
+    function addField(f) {
+      fields.push(f);
+      if (Object.prototype.hasOwnProperty.call(map, f.ai)) {
+        f.duplicate = true;
+        dupes[f.ai] = true;
+        warnings.push('(' + f.ai + ') ' + f.label + '이(가) 두 번 이상 들어 있습니다.');
+      } else {
+        map[f.ai] = f.value;
+      }
+    }
 
     function finish() {
       if (map['01'] && !isValidGtin(map['01'])) warnings.push('GTIN 체크디지트가 맞지 않습니다. 다시 스캔하세요.');
@@ -192,6 +203,7 @@
           if (!f.iso) warnings.push('(' + f.ai + ') 날짜 형식이 올바르지 않습니다: ' + f.value);
         }
       });
+      Object.keys(dupes).forEach(function (ai) { delete map[ai]; });
       return { ok: fields.length > 0 && !!map['01'], fields: fields, map: map, warnings: warnings };
     }
   }
@@ -226,6 +238,7 @@
       lot: '',
       expiry: '',
       expiryRaw: '',
+      lotCandidate: '',
       serial: '',
       gs1Fields: [],
       warnings: []
@@ -279,12 +292,34 @@
       r.warnings = r.warnings.concat(gs1.warnings);
       r.gtin = gs1.map['01'] || '';
       r.gtinValid = r.gtin ? isValidGtin(r.gtin) : false;
-      r.lot = gs1.map['10'] || '';
       r.serial = gs1.map['21'] || '';
-      if (gs1.map['17']) {
+      // 원문에 GS(FNC1)나 GS1 심볼 식별자(]d2, ]C1 …)가 있으면 판독기가 구분자를 보존한 것으로 본다.
+      // (ZXing은 선두 FNC1을 GS 또는 ]C1로 주고, 이후 FNC1은 GS로 준다)
+      var gsKept = stripped.hadMarker || trimmed.indexOf(GS) !== -1;
+      gs1.fields.forEach(function (f) {
+        f.certain = f.term === 'fixed' || f.term === 'gs' || f.term === 'paren' || (f.term === 'end' && gsKept);
+        if (!f.certain) {
+          r.warnings.push('(' + f.ai + ') ' + f.label + ': 원문에 GS 구분자가 없어 값이 어디서 끝나는지 확정할 수 없습니다. 뒤의 항목이 섞였을 수 있습니다.');
+        }
+      });
+      var lotField = gs1.fields.filter(function (f) { return f.ai === '10'; });
+      if (gs1.map['10'] !== undefined && lotField.length === 1) {
+        var lf = lotField[0];
+        if (lf.certain && lf.value && lf.value.length <= 20) {
+          r.lot = lf.value;
+          lf.autofill = true;
+        } else {
+          r.lotCandidate = lf.value;
+          r.warnings.push('제조번호(10)는 경계가 확실하지 않아 자동 입력하지 않았습니다. 포장에 인쇄된 제조번호를 직접 입력하세요.');
+        }
+      }
+      var expField = gs1.fields.filter(function (f) { return f.ai === '17'; });
+      if (gs1.map['17'] && expField.length === 1 && gs1DateToIso(gs1.map['17'])) {
         r.expiryRaw = gs1.map['17'];
         r.expiry = gs1DateToIso(gs1.map['17']);
+        expField[0].autofill = true;
       }
+      r.gs1Offset = trimmed.length - data.length; // 표식(]d2, 선두 GS) 길이: 진단 표시용
     }
 
     r.format = format;

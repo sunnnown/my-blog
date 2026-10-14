@@ -71,9 +71,59 @@ test('수동 입력 판별', () => {
   assert.strictEqual(B.analyze({ text: 'ABC-1', format: 'MANUAL' }).format, 'OTHER');
 });
 
-test('GS 없는 긴 가변 필드는 경고', () => {
-  const r = B.analyze({ text: GS + '010200123456789317271231' + '10TEST12321SN000001', format: 'DATA_MATRIX' });
-  assert.ok(r.warnings.length > 0);
+test('GS 없는 원문(판독기가 구분자를 버린 경우): 제조번호 자동 입력 안 함', () => {
+  // 구분자·심볼 식별자가 전혀 없으면 (10) 값이 어디서 끝나는지 알 수 없다
+  const r = B.analyze({ text: '0102001234567893' + '17271231' + '10TEST123' + '21SN000001', format: 'DATA_MATRIX' });
+  assert.strictEqual(r.lot, '');
+  assert.strictEqual(r.lotCandidate, 'TEST12321SN000001');
+  assert.ok(r.warnings.some((w) => w.includes('자동 입력하지 않았습니다')));
+  assert.strictEqual(r.expiry, '2027-12-31'); // 고정 길이 (17)은 경계가 확실
+});
+
+// 회귀: 실제 포장에서 일련번호(21)만 있고 제조번호(10)가 없는데 제조번호가 채워진 사례.
+// 실제 바코드 값 대신 같은 구조의 테스트 값을 사용한다.
+test('회귀: 일련번호(21)만 있으면 제조번호를 만들지 않음', () => {
+  const variants = [
+    GS + '0102001234567893' + '21912602005643' + GS + '17290622', // 01, 21, GS, 17
+    GS + '0102001234567893' + '17290622' + '21912602005643', // 01, 17, 21(끝)
+    ']d20102001234567893' + '17290622' + '21912602005643', // 심볼 식별자
+    '0102001234567893' + '17290622' + '21912602005643', // 구분자 없음
+  ];
+  for (const raw of variants) {
+    const r = B.analyze({ text: raw, format: 'DATA_MATRIX', source: 'camera-zxing' });
+    assert.strictEqual(r.lot, '', B.visibleRaw(raw));
+    assert.strictEqual(r.lotCandidate, '', B.visibleRaw(raw));
+    assert.strictEqual(r.expiry, '2029-06-22', B.visibleRaw(raw));
+    assert.ok(!r.gs1Fields.some((f) => f.ai === '10'), B.visibleRaw(raw));
+  }
+  // GS가 있는 원문에서는 일련번호 전체가 그대로 (21)
+  assert.strictEqual(B.analyze({ text: variants[0], format: 'DATA_MATRIX' }).serial, '912602005643');
+  // 사람이 읽는 표기
+  const hr = B.analyze({ text: '(01)02001234567893(21)912602005643', format: 'MANUAL' });
+  assert.strictEqual(hr.lot, '');
+  assert.strictEqual(hr.serial, '912602005643');
+  assert.strictEqual(hr.expiry, '');
+});
+
+test('회귀: 제조번호(10)가 따로 있으면 그 값만 사용', () => {
+  const cases = [
+    [GS + '0102001234567893' + '17290622' + '106020' + GS + '21912602005643', 'ZXing: 10 뒤 GS, 21 끝'],
+    [GS + '0102001234567893' + '21912602005643' + GS + '17290622' + '106020', 'ZXing: 21 뒤 GS, 10 끝'],
+    [']d20102001234567893' + '17290622' + '106020' + GS + '21912602005643', '심볼 식별자'],
+    ['(01)02001234567893(17)290622(10)6020(21)912602005643', '사람이 읽는 표기'],
+  ];
+  for (const [raw, label] of cases) {
+    const r = B.analyze({ text: raw, format: /^\(/.test(raw) ? 'MANUAL' : 'DATA_MATRIX' });
+    assert.strictEqual(r.lot, '6020', label);
+    assert.strictEqual(r.serial, '912602005643', label);
+    assert.strictEqual(r.expiry, '2029-06-22', label);
+  }
+});
+
+test('같은 AI가 두 번 나오면 자동 입력 안 함', () => {
+  const r = B.analyze({ text: GS + '0102001234567893' + '10AAA' + GS + '10BBB' + GS + '17290622', format: 'DATA_MATRIX' });
+  assert.strictEqual(r.lot, '');
+  assert.ok(r.warnings.some((w) => w.includes('두 번')));
 });
 
 test('저장소: 같은 약품의 여러 입고 기록 + 미확인 + 수정/삭제', () => {

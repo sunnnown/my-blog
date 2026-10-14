@@ -28,6 +28,20 @@
     "expected": "010200987654321310LOT42"
   },
   {
+    "file": "gs1-datamatrix-serial-only",
+    "bcid": "gs1datamatrix",
+    "text": "(01)02001234567893(17)290622(21)912602005643",
+    "label": "GS1 DataMatrix (일련번호만, 제조번호 없음 → 제조번호 자동 입력 안 됨이 정상)",
+    "expected": "01020012345678931729062221912602005643"
+  },
+  {
+    "file": "gs1-datamatrix-lot-serial",
+    "bcid": "gs1datamatrix",
+    "text": "(01)02001234567893(17)290622(10)6020(21)912602005643",
+    "label": "GS1 DataMatrix (제조번호 6020 + 일련번호)",
+    "expected": "010200123456789317290622106020<GS>21912602005643"
+  },
+  {
     "file": "ean13-b",
     "bcid": "ean13",
     "text": "2009876543213",

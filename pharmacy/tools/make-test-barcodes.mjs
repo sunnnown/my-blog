@@ -23,6 +23,8 @@ export const samples = [
   { file: 'gs1-datamatrix-a', bcid: 'gs1datamatrix', text: `(01)0${ean1}(17)271231(10)TEST123(21)SN000001`, label: 'GS1 DataMatrix (테스트 약품 A · 사용기한 2027-12-31 · 제조번호 TEST123)', expected: `010${ean1}1727123110TEST123<GS>21SN000001`, scale: 8 },
   { file: 'code128', bcid: 'code128', text: 'PBS-TEST-128', label: 'Code 128 (GTIN 없음)', expected: 'PBS-TEST-128', scale: 3, includetext: true },
   { file: 'gs1-128-b', bcid: 'gs1-128', text: `(01)0${ean2}(10)LOT42`, label: 'GS1-128 (테스트 약품 B · 제조번호 LOT42)', expected: `010${ean2}10LOT42`, scale: 3, includetext: true },
+  { file: 'gs1-datamatrix-serial-only', bcid: 'gs1datamatrix', text: `(01)0${ean1}(17)290622(21)912602005643`, label: 'GS1 DataMatrix (일련번호만, 제조번호 없음 → 제조번호 자동 입력 안 됨이 정상)', expected: `010${ean1}1729062221912602005643`, scale: 8 },
+  { file: 'gs1-datamatrix-lot-serial', bcid: 'gs1datamatrix', text: `(01)0${ean1}(17)290622(10)6020(21)912602005643`, label: 'GS1 DataMatrix (제조번호 6020 + 일련번호)', expected: `010${ean1}17290622106020<GS>21912602005643`, scale: 8 },
   { file: 'ean13-b', bcid: 'ean13', text: ean2, label: 'EAN-13 (테스트 약품 B)', expected: ean2, scale: 4, includetext: true },
 ];
 

@@ -500,6 +500,26 @@ input:focus-visible,
 }
 .gs1-table td code { word-break: break-all; }
 
+.diag {
+  margin-top: 12px;
+  font-size: 0.85rem;
+}
+.diag summary { cursor: pointer; color: var(--muted); font-weight: 600; min-height: 32px; }
+.diag .kv { margin-top: 8px; }
+.diag-copy { display: block; margin-top: 10px; color: var(--muted); }
+.diag-copy textarea {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  font-family: var(--mono);
+  font-size: 0.8rem;
+  color: var(--text);
+  background: var(--code-bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px;
+}
+
 .warnings {
   margin: 12px 0 0;
   padding: 10px 14px 10px 30px;
