@@ -187,6 +187,7 @@
 
   function handleDecoded(res) {
     var scan = B.analyze({ text: res.text, format: res.format, source: res.source });
+    if (res.photo) scan.photo = res.photo; // 사진 인식 단계 (진단 표시용)
     if (navigator.vibrate) navigator.vibrate(80);
     state.autoRestart = res.source && res.source.indexOf('camera') === 0;
     setScan(scan);
@@ -215,6 +216,136 @@
       state.autoRestart = false;
       startScan();
     }
+  }
+
+  // ---------- 사진 인식 / 바코드 영역 지정 ----------
+
+  var picker = { file: null, img: null, url: null, rect: null, drag: null };
+
+  function decodePhoto(file, region) {
+    showError($('camera-error'), '');
+    $('scanner-status').textContent = '사진에서 바코드를 찾는 중…';
+    $('region-retry').disabled = true;
+    var report = {};
+    return SC.decodeImageFile(file, {
+      region: region,
+      report: report,
+      onProgress: function (msg) { $('scanner-status').textContent = msg; }
+    }).then(function (res) {
+      $('scanner-status').textContent = '';
+      $('region-retry').disabled = !picker.rect;
+      if (!res) {
+        showError($('camera-error'), (region
+          ? '지정한 영역에서도 바코드를 읽지 못했습니다 (' + report.tries + '회 시도). 영역을 바코드에 더 꼭 맞게 다시 지정하거나, 초점을 맞춰 다시 찍거나, 번호를 직접 입력하세요.'
+          : '사진에서 바코드를 찾지 못했습니다 (' + report.tries + '회 시도' + (report.timedOut ? ', 시간 초과' : '') +
+            '). 아래 사진에서 바코드 영역을 직접 지정해 다시 시도하거나, 번호를 직접 입력하세요.'));
+        openRegionPicker(file);
+        return;
+      }
+      closeRegionPicker();
+      handleDecoded(res);
+    }).catch(function (e) {
+      $('scanner-status').textContent = '';
+      $('region-retry').disabled = !picker.rect;
+      showError($('camera-error'), e.message);
+    });
+  }
+
+  function openRegionPicker(file) {
+    if (picker.file === file && picker.img) {
+      $('region-picker').hidden = false;
+      return;
+    }
+    closeRegionPicker();
+    picker.file = file;
+    picker.url = URL.createObjectURL(file);
+    var img = new Image();
+    img.onload = function () {
+      picker.img = img;
+      $('region-picker').hidden = false;
+      drawRegion();
+      $('region-picker').scrollIntoView({ behavior: 'smooth', block: 'end' });
+    };
+    img.src = picker.url;
+  }
+
+  function closeRegionPicker() {
+    $('region-picker').hidden = true;
+    if (picker.url) URL.revokeObjectURL(picker.url);
+    picker = { file: null, img: null, url: null, rect: null, drag: null };
+    $('region-retry').disabled = true;
+  }
+
+  // 화면 크기에 맞춰 사진과 선택 사각형을 그린다 (picker.rect는 원본 사진 픽셀 좌표)
+  function drawRegion() {
+    var c = $('region-canvas');
+    var img = picker.img;
+    if (!img) return;
+    var cssW = c.parentNode.clientWidth;
+    var cssH = Math.min(Math.round(cssW * img.naturalHeight / img.naturalWidth), Math.round(window.innerHeight * 0.55));
+    cssW = Math.round(cssH * img.naturalWidth / img.naturalHeight);
+    var dpr = window.devicePixelRatio || 1;
+    c.style.width = cssW + 'px';
+    c.style.height = cssH + 'px';
+    c.width = Math.round(cssW * dpr);
+    c.height = Math.round(cssH * dpr);
+    var ctx = c.getContext('2d');
+    ctx.drawImage(img, 0, 0, c.width, c.height);
+    var r = picker.rect;
+    if (r) {
+      var k = c.width / img.naturalWidth;
+      ctx.fillStyle = 'rgba(0,0,0,0.45)';
+      ctx.beginPath();
+      ctx.rect(0, 0, c.width, c.height);
+      ctx.rect(r.x * k, r.y * k, r.w * k, r.h * k);
+      ctx.fill('evenodd');
+      ctx.strokeStyle = '#2dd4bf';
+      ctx.lineWidth = 3 * dpr;
+      ctx.strokeRect(r.x * k, r.y * k, r.w * k, r.h * k);
+    }
+  }
+
+  function initRegionPicker() {
+    var c = $('region-canvas');
+    function toImage(ev) {
+      var b = c.getBoundingClientRect();
+      var k = picker.img.naturalWidth / b.width;
+      return {
+        x: Math.max(0, Math.min(picker.img.naturalWidth, (ev.clientX - b.left) * k)),
+        y: Math.max(0, Math.min(picker.img.naturalHeight, (ev.clientY - b.top) * k))
+      };
+    }
+    c.addEventListener('pointerdown', function (ev) {
+      if (!picker.img) return;
+      c.setPointerCapture(ev.pointerId);
+      picker.drag = toImage(ev);
+      picker.rect = null;
+      $('region-retry').disabled = true;
+      ev.preventDefault();
+    });
+    c.addEventListener('pointermove', function (ev) {
+      if (!picker.drag) return;
+      var p = toImage(ev);
+      var d = picker.drag;
+      picker.rect = { x: Math.min(d.x, p.x), y: Math.min(d.y, p.y), w: Math.abs(p.x - d.x), h: Math.abs(p.y - d.y) };
+      drawRegion();
+    });
+    function end() {
+      if (!picker.drag) return;
+      picker.drag = null;
+      var r = picker.rect;
+      // 너무 작은 선택은 무시 (손가락 터치 실수)
+      if (!r || r.w < picker.img.naturalWidth * 0.02 || r.h < picker.img.naturalHeight * 0.01) picker.rect = null;
+      $('region-retry').disabled = !picker.rect;
+      drawRegion();
+    }
+    c.addEventListener('pointerup', end);
+    c.addEventListener('pointercancel', end);
+    $('region-retry').addEventListener('click', function () {
+      if (picker.file && picker.rect) decodePhoto(picker.file, picker.rect);
+    });
+    $('region-cancel').addEventListener('click', closeRegionPicker);
+    window.addEventListener('resize', function () { if (!$('region-picker').hidden) drawRegion(); });
   }
 
   // ---------- 입고 등록 ----------
@@ -282,8 +413,12 @@
       source: scan.source,
       fields: (scan.gs1Fields || []).map(function (f) { return [f.ai, f.value, f.term]; })
     });
+    var photo = scan.photo
+      ? '<dt>사진 인식</dt><dd>' + esc(scan.photo.stage) + ' 단계에서 성공 · ' + scan.photo.tries + '회 시도 · ' +
+        (scan.photo.ms / 1000).toFixed(1) + '초</dd>'
+      : '';
     $('scan-diag-body').innerHTML =
-      '<dl class="kv">' +
+      '<dl class="kv">' + photo +
       '<dt>원문 길이</dt><dd>' + raw.length + '자</dd>' +
       '<dt>GS(FNC1) 구분자</dt><dd>' + gsCount + '개' + (scan.gs1Offset ? ' · 앞 표식 ' + scan.gs1Offset + '자' : '') + '</dd>' +
       '<dt>원문</dt><dd><code class="raw">' + esc(B.visibleRaw(raw)) + '</code></dd>' +
@@ -695,20 +830,10 @@
       var file = ev.target.files && ev.target.files[0];
       ev.target.value = '';
       if (!file) return;
-      showError($('camera-error'), '');
-      $('scanner-status').textContent = '사진에서 바코드를 찾는 중…';
-      SC.decodeImageFile(file).then(function (res) {
-        $('scanner-status').textContent = '';
-        if (!res) {
-          showError($('camera-error'), '사진에서 바코드를 찾지 못했습니다. 바코드가 화면을 크게 채우고 초점이 맞도록 다시 찍거나, 번호를 직접 입력하세요.');
-          return;
-        }
-        handleDecoded(res);
-      }).catch(function (e) {
-        $('scanner-status').textContent = '';
-        showError($('camera-error'), e.message);
-      });
+      closeRegionPicker();
+      decodePhoto(file, null);
     });
+    initRegionPicker();
 
     $('manual-form').addEventListener('submit', function (ev) {
       ev.preventDefault();

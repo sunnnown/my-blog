@@ -372,6 +372,20 @@ legend.card-title + * { clear: both; }
   text-align: center;
 }
 
+.region-picker {
+  margin-top: 12px;
+  /* 화면 아래 탭바에 버튼이 가리지 않게 */
+  scroll-margin-bottom: calc(var(--tabbar-h) + env(safe-area-inset-bottom) + 16px);
+}
+.region-picker canvas {
+  display: block;
+  margin: 8px auto 0;
+  max-width: 100%;
+  border-radius: 8px;
+  touch-action: none; /* 끌어서 영역 지정할 때 화면이 스크롤되지 않게 */
+  cursor: crosshair;
+}
+
 /* ---------- 폼 ---------- */
 
 .manual-form label,

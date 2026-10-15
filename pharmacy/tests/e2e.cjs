@@ -232,6 +232,120 @@ async function testPageAndServer(browser) {
   await ctx.close();
 }
 
+// 합성 "사진" 만들기: 복잡한 배경 위에 테스트 바코드를 작게·기울여·흐리게 배치 (실제 사진 아님)
+async function makeSyntheticPhoto(page, file, opts) {
+  const dataUrl = await page.evaluate(async ({ file, opts }) => {
+    const img = new Image();
+    img.src = 'test-barcodes/' + file + '.png';
+    await img.decode();
+    const c = document.createElement('canvas');
+    c.width = 1000; c.height = 2000;
+    const x = c.getContext('2d');
+    const g = x.createLinearGradient(0, 0, 1000, 2000);
+    g.addColorStop(0, '#c9c4bb'); g.addColorStop(1, '#8d8a85');
+    x.fillStyle = g; x.fillRect(0, 0, 1000, 2000);
+    let seed = 7; const rnd = () => ((seed = (seed * 16807) % 2147483647) / 2147483647);
+    for (let i = 0; i < 70; i++) { // 잡동사니(상자, 글자) — 판독기를 헷갈리게 하는 배경
+      x.fillStyle = `hsl(${Math.round(rnd() * 360)},20%,${Math.round(30 + rnd() * 50)}%)`;
+      x.fillRect(rnd() * 1000, rnd() * 2000, 40 + rnd() * 260, 20 + rnd() * 160);
+      x.fillStyle = '#222'; x.font = `${14 + Math.round(rnd() * 30)}px sans-serif`;
+      x.fillText('TEST 1234 테스트', rnd() * 900, rnd() * 2000);
+    }
+    if (opts.size) {
+      x.save();
+      x.translate(opts.cx, opts.cy); x.rotate((opts.rot || 0) * Math.PI / 180);
+      x.fillStyle = '#fff'; x.fillRect(-opts.size * 0.75, -opts.size * 0.75, opts.size * 1.5, opts.size * 1.5);
+      x.imageSmoothingEnabled = false;
+      if (opts.blur) x.filter = `blur(${opts.blur}px)`;
+      x.drawImage(img, -opts.size / 2, -opts.size / 2, opts.size, opts.size);
+      x.restore();
+      if (opts.fade) { x.fillStyle = `rgba(200,200,200,${opts.fade})`; x.fillRect(opts.cx - opts.size, opts.cy - opts.size, opts.size * 2, opts.size * 2); }
+    }
+    return c.toDataURL('image/jpeg', 0.85);
+  }, { file, opts });
+  const out = path.join(OUT, 'synthetic-' + opts.name + '.jpg');
+  fs.writeFileSync(out, Buffer.from(dataUrl.split(',')[1], 'base64'));
+  return out;
+}
+
+async function photoPreprocess(browser) {
+  console.log('\n[7] 사진 전처리·영역 지정 (합성 이미지 — 실제 사진 아님)');
+  const ctx = await browser.newContext({ ...mobile, ignoreHTTPSErrors: true });
+  const page = await ctx.newPage();
+  await page.goto(BASE + '?engine=zxing#home');
+  const sample = samples.find((x) => x.file === 'gs1-datamatrix-lot-serial');
+  const cases = [
+    { name: 'small-offcenter', size: 170, cx: 700, cy: 1450 },
+    { name: 'rotated-faded', size: 190, cx: 300, cy: 600, rot: 38, fade: 0.35 },
+  ];
+  for (const c of cases) {
+    const file = await makeSyntheticPhoto(page, sample.file, c);
+    await page.goto(BASE + '?engine=zxing#home');
+    await page.setInputFiles('#photo-input', file);
+    try {
+      await waitView(page, 'receive', { timeout: 60000 });
+      const raw = (await page.textContent('#scan-raw')).replace(/^<GS>/, '');
+      const diag = await page.textContent('#scan-diag-body');
+      const stage = (diag.match(/사진 인식(.+?단계)/) || [])[1] || '?';
+      check(`합성 ${c.name}: 자동 인식 (${stage.trim()})`, raw === sample.expected, raw);
+      await page.click('#receive-cancel');
+    } catch (e) {
+      check(`합성 ${c.name}: 자동 인식`, false, await page.textContent('#camera-error'));
+    }
+  }
+
+  // 바코드 없는 사진: 값을 만들지 않고 실패 + 영역 지정 화면 표시
+  const empty = await makeSyntheticPhoto(page, sample.file, { name: 'no-barcode' });
+  await page.goto(BASE + '?engine=zxing#home');
+  await page.setInputFiles('#photo-input', empty);
+  await page.waitForSelector('#region-picker:not([hidden])', { timeout: 60000 });
+  check('바코드 없는 사진 → 실패 안내', (await page.textContent('#camera-error')).includes('찾지 못했습니다'));
+  check('바코드 없는 사진 → 입고 화면으로 가지 않음', (await page.evaluate(() => location.hash)) === '#home' &&
+    (await page.evaluate(() => sessionStorage.getItem('pbs.currentScan'))) === null);
+  check('영역 지정 버튼은 영역 선택 전 비활성', await page.isDisabled('#region-retry'));
+
+  // 자동 인식이 실패한 사진에서 사용자가 영역을 지정해 재시도
+  // (테스트 훅 없이 실제 화면 조작: 캔버스 위를 끌어서 사각형 지정)
+  const hard = { name: 'tiny', size: 64, cx: 760, cy: 1700 };
+  const hardFile = await makeSyntheticPhoto(page, sample.file, hard);
+  await page.goto(BASE + '?engine=zxing#home');
+  await page.setInputFiles('#photo-input', hardFile);
+  const outcome = await Promise.race([
+    waitView(page, 'receive', { timeout: 60000 }).then(() => 'auto'),
+    page.waitForSelector('#region-picker:not([hidden])', { timeout: 60000 }).then(() => 'picker'),
+  ]);
+  if (outcome === 'auto') {
+    check('작은 바코드: 자동 인식이 성공해 영역 지정 시험 불가 (합성 이미지 조정 필요)', false);
+  } else {
+    check('작은 바코드: 자동 인식 실패 → 영역 지정 화면 표시', true);
+    // 영역 지정 화면이 부드럽게 스크롤되며 나타나므로, 위치가 멈출 때까지 기다린다
+    let box = null;
+    for (let i = 0; i < 40; i++) {
+      const b = await page.locator('#region-canvas').boundingBox();
+      if (box && b && b.y === box.y && b.width === box.width) break;
+      box = b;
+      await page.waitForTimeout(100);
+    }
+    const k = box.width / 1000;
+    const pad = hard.size * 0.9;
+    await page.mouse.move(box.x + (hard.cx - pad) * k, box.y + (hard.cy - pad) * k);
+    await page.mouse.down();
+    await page.mouse.move(box.x + (hard.cx + pad) * k, box.y + (hard.cy + pad) * k, { steps: 5 });
+    await page.mouse.up();
+    check('영역을 끌어 지정하면 재시도 버튼 활성', await page.isEnabled('#region-retry'));
+    await page.click('#region-retry');
+    try {
+      await waitView(page, 'receive', { timeout: 60000 });
+      const raw = (await page.textContent('#scan-raw')).replace(/^<GS>/, '');
+      const diag = await page.textContent('#scan-diag-body');
+      check('지정 영역 재시도 → 같은 원문', raw === sample.expected && diag.includes('지정 영역'), raw);
+    } catch (e) {
+      check('지정 영역 재시도', false, await page.textContent('#camera-error'));
+    }
+  }
+  await ctx.close();
+}
+
 async function photoDecode(browser) {
   console.log('\n[2] 사진 인식 (테스트 바코드 PNG)');
   const ctx = await browser.newContext({ ...mobile, ignoreHTTPSErrors: true });
@@ -353,6 +467,7 @@ async function fakeCamera() {
   await mainFlow(browser);
   await photoDecode(browser);
   await testPageAndServer(browser);
+  await photoPreprocess(browser);
   await browser.close();
   await cameraDenied();
   await insecureContext();
