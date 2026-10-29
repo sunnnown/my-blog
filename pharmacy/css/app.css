@@ -424,6 +424,13 @@ input[type="date"] {
 
 label.field input { margin-top: 4px; font-weight: 400; }
 
+/* 바코드에서 읽은 값: 수정할 수 없음을 보이게 */
+input[readonly] {
+  background: var(--code-bg);
+  border-style: dashed;
+  font-family: var(--mono);
+}
+
 input:focus-visible,
 .btn:focus-visible,
 .tab:focus-visible,

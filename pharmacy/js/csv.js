@@ -10,6 +10,11 @@
 
   var BOM = '﻿';
 
+  // store.js의 effectiveLot / lotMismatch와 같은 규칙 (이 파일은 store 없이도 동작해야 함)
+  function str(v) { return v == null ? '' : String(v).trim(); }
+  function effectiveLot(r) { return str(r.lot) || str(r.barcodeLot); }
+  function lotMismatch(r) { return !!(str(r.lot) && str(r.barcodeLot) && str(r.lot) !== str(r.barcodeLot)); }
+
   var COLUMNS = [
     ['입고일', function (r) { return r.receipt.receivedDate; }],
     ['공급처', function (r) { return r.receipt.supplier; }],
@@ -19,7 +24,10 @@
     ['IT3000 박스번호', function (r) { return r.product ? r.product.it3000Box : ''; }],
     ['입고수량', function (r) { return String(r.receipt.quantity); }],
     ['단위', function (r) { return r.receipt.unit; }],
-    ['제조번호', function (r) { return r.receipt.lot; }],
+    // 제조번호: 기록값(포장 확인 우선) + 바코드 값 + 둘이 다를 때 표시
+    ['제조번호', function (r) { return effectiveLot(r.receipt); }],
+    ['바코드 제조번호', function (r) { return r.receipt.barcodeLot || ''; }],
+    ['제조번호 불일치', function (r) { return lotMismatch(r.receipt) ? '예' : ''; }],
     ['사용기한', function (r) { return r.receipt.expiry; }],
     ['GTIN', function (r) { return r.product ? r.product.gtin : ''; }, true],
     ['바코드 원본', function (r) { return r.receipt.scan ? r.receipt.scan.raw.replace(/\u001d/g, '<GS>') : ''; }, true],

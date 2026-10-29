@@ -429,6 +429,26 @@
       '<label class="diag-copy">문제 보고용 (길게 눌러 복사)<textarea readonly rows="3">' + esc(report) + '</textarea></label>';
   }
 
+  // 바코드 제조번호(읽기 전용) 표시. value가 null이면 이 값이 따로 저장되기 전의 기록
+  function setBarcodeLot(value) {
+    var el = field('barcodeLot');
+    el.value = value || '';
+    el.placeholder = value == null ? '기록 없음 (이전 기록)' : '없음';
+    field('lot').placeholder = value ? '같으면 비워 둠' : '포장 인쇄 값';
+    updateLotMismatch();
+  }
+
+  function updateLotMismatch() {
+    var el = $('lot-mismatch');
+    var barcodeLot = field('barcodeLot').value;
+    var lot = field('lot').value.trim();
+    var differs = S.lotMismatch({ lot: lot, barcodeLot: barcodeLot });
+    el.textContent = differs
+      ? '포장 확인값(' + lot + ')이 바코드 값(' + barcodeLot + ')과 다릅니다. 두 값이 모두 저장됩니다.'
+      : '';
+    el.hidden = !differs;
+  }
+
   function setProductStatus(product, isNew) {
     var el = $('product-status');
     if (isNew) {
@@ -481,6 +501,7 @@
       renderScanCard(re);
       PRODUCT_FIELDS.forEach(function (k) { field(k).value = product[k] || ''; });
       RECEIPT_FIELDS.forEach(function (k) { field(k).value = receipt[k] == null ? '' : receipt[k]; });
+      setBarcodeLot(receipt.barcodeLot == null ? null : receipt.barcodeLot);
       setProductStatus(product, false);
       return;
     }
@@ -499,9 +520,10 @@
       field('supplier').value = localStorage.getItem('pbs.lastSupplier') || '';
       field('unit').value = localStorage.getItem('pbs.lastUnit') || '';
     } catch (e) { /* 무시 */ }
-    if (scan.lot) field('lot').value = scan.lot;
+    // 바코드 제조번호는 별도 칸에만 보여 주고, 포장 확인 칸은 사람이 채운다
+    setBarcodeLot(scan.lot || '');
     if (scan.expiry) field('expiry').value = scan.expiry;
-    $('gs1-prefill-hint').hidden = !(scan.lot || scan.expiry);
+    $('gs1-prefill-hint').hidden = !scan.expiry;
   }
 
   // 저장된 형식 표시명 → analyze()용 형식 코드
@@ -593,7 +615,11 @@
     details.push('제조사 ' + orUnknown(p.manufacturer));
     details.push('포장 ' + orUnknown(p.packUnit));
     if (p.it3000Box) details.push('박스 ' + esc(p.it3000Box));
-    if (r.lot) details.push('제조번호 ' + esc(r.lot));
+    if (S.lotMismatch(r)) {
+      details.push('<span class="unknown">제조번호 불일치: 포장 ' + esc(r.lot) + ' / 바코드 ' + esc(r.barcodeLot) + '</span>');
+    } else if (S.effectiveLot(r)) {
+      details.push('제조번호 ' + esc(S.effectiveLot(r)));
+    }
     if (r.expiry) details.push('사용기한 ' + esc(r.expiry));
     if (r.memo) details.push('메모 ' + esc(r.memo));
     return '<li class="record">' +
@@ -844,6 +870,7 @@
     });
 
     $('receive-form').addEventListener('submit', submitReceive);
+    field('lot').addEventListener('input', updateLotMismatch);
     $('receive-cancel').addEventListener('click', cancelReceive);
     $('rescan-link').addEventListener('click', function () {
       setScan(null);

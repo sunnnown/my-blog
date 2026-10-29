@@ -156,6 +156,51 @@ test('저장소: 같은 약품의 여러 입고 기록 + 미확인 + 수정/삭�
   assert.throws(() => S.parseBackup('{"products":[]}'), /형식/);
 });
 
+test('저장소: 바코드 제조번호와 포장 확인 제조번호를 따로 보관', () => {
+  S.clearAll();
+  const dm = B.analyze({ text: GS + '0102001234567893' + '17290622' + '106126020' + GS + '21912602005643', format: 'DATA_MATRIX', source: 'photo' });
+  const base = { supplier: '지오영', receivedDate: '2026-10-29', quantity: 1, unit: '박스' };
+  // 포장 확인값을 비워 두면 바코드 값이 기록값
+  const same = S.addReceipt(dm, {}, base);
+  assert.strictEqual(same.barcodeLot, '6126020');
+  assert.strictEqual(same.lot, '');
+  assert.strictEqual(S.effectiveLot(same), '6126020');
+  assert.strictEqual(S.lotMismatch(same), false);
+  // 포장 인쇄가 다르면 두 값 모두 남고 불일치로 표시
+  const diff = S.addReceipt(dm, {}, Object.assign({}, base, { lot: '6020' }));
+  assert.strictEqual(diff.barcodeLot, '6126020');
+  assert.strictEqual(diff.lot, '6020');
+  assert.strictEqual(S.effectiveLot(diff), '6020');
+  assert.strictEqual(S.lotMismatch(diff), true);
+  // 수정해도 바코드 값은 바뀌지 않는다 (입력에 섞여 와도 무시)
+  S.updateReceipt(diff.id, null, Object.assign({}, base, { lot: '6020', barcodeLot: 'X' }));
+  assert.strictEqual(S.getReceipt(diff.id).barcodeLot, '6126020');
+  // 두 값 모두 검색된다
+  assert.strictEqual(S.queryReceipts({ q: '6126020' }).length, 2);
+  assert.strictEqual(S.queryReceipts({ q: '6020' }).length, 2);
+  // 경계가 불확실하면 바코드 값을 저장하지 않는다
+  const unsure = B.analyze({ text: '01020012345678931727123110TEST12321SN000001', format: 'DATA_MATRIX' });
+  assert.strictEqual(S.addReceipt(unsure, {}, base).barcodeLot, '');
+  // 이 필드가 생기기 전 기록(barcodeLot 없음)은 lot을 그대로 쓴다
+  const old = { lot: 'OLD1' };
+  assert.strictEqual(S.effectiveLot(old), 'OLD1');
+  assert.strictEqual(S.lotMismatch(old), false);
+});
+
+test('CSV: 제조번호 기록값·바코드 값·불일치 열', () => {
+  const row = (receipt) => ({ receipt: Object.assign({ receivedDate: '2026-10-29', supplier: 'a', quantity: 1, unit: '박스', expiry: '', memo: '', createdAt: 't', updatedAt: 't' }, receipt), product: null });
+  const csv = C.buildReceiptsCsv([
+    row({ lot: '6020', barcodeLot: '6126020' }),
+    row({ lot: '', barcodeLot: '6126020' }),
+    row({ lot: 'OLD1' }),
+  ], { excelText: false });
+  const lines = csv.slice(1).split('\r\n');
+  assert.ok(lines[0].includes(',제조번호,바코드 제조번호,제조번호 불일치,'));
+  assert.ok(lines[1].includes(',6020,6126020,예,'));
+  assert.ok(lines[2].includes(',6126020,6126020,,'));
+  assert.ok(lines[3].includes(',OLD1,,,'));
+});
+
 test('CSV: BOM, 한글, 미확인, 엑셀 텍스트, 수식 방지', () => {
   const rows = [{
     receipt: { receivedDate: '2026-10-01', supplier: '=HYPERLINK("x")', quantity: 3, unit: '박스', lot: '', expiry: '', memo: '쉼표,포함', createdAt: 't', updatedAt: 't', scan: { raw: '2001234567893', format: 'EAN-13' } },

@@ -180,15 +180,21 @@
           </div>
           <div class="field-grid">
             <div class="field">
-              <label for="f-lot">제조번호 <span class="opt">선택</span></label>
-              <input id="f-lot" name="lot" type="text" autocomplete="off">
+              <label for="f-barcodeLot">제조번호 (바코드)</label>
+              <input id="f-barcodeLot" type="text" readonly tabindex="-1" placeholder="없음">
             </div>
             <div class="field">
-              <label for="f-expiry">사용기한 <span class="opt">선택</span></label>
-              <input id="f-expiry" name="expiry" type="date">
+              <label for="f-lot">제조번호 (포장 확인) <span class="opt">선택</span></label>
+              <input id="f-lot" name="lot" type="text" autocomplete="off">
             </div>
           </div>
-          <p class="hint" id="gs1-prefill-hint" hidden>제조번호·사용기한은 바코드에서 자동으로 채웠습니다. 포장 표기와 같은지 확인하세요.</p>
+          <p class="hint" id="lot-hint">바코드 값은 수정할 수 없습니다. 포장 인쇄가 바코드 값과 같으면 비워 두세요.</p>
+          <p class="status-pill warn" id="lot-mismatch" role="status" hidden></p>
+          <div class="field">
+            <label for="f-expiry">사용기한 <span class="opt">선택</span></label>
+            <input id="f-expiry" name="expiry" type="date">
+          </div>
+          <p class="hint" id="gs1-prefill-hint" hidden>사용기한은 바코드에서 자동으로 채웠습니다. 포장 표기와 같은지 확인하세요.</p>
           <div class="field">
             <label for="f-memo">메모 <span class="opt">선택</span></label>
             <input id="f-memo" name="memo" type="text" autocomplete="off" placeholder="환자 정보는 입력하지 마세요">

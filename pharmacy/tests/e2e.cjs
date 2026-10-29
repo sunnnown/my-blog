@@ -103,7 +103,13 @@ async function mainFlow(browser) {
   // 2) 같은 약품(GS1 표기) → 다른 공급처·입고일
   await manualEntry(page, '(01)02001234567893(17)271231(10)TEST123');
   check('GS1 표기 → 같은 약품으로 인식', (await page.textContent('#product-status')).includes('이전에 등록한'));
-  check('제조번호 자동 채움', (await page.inputValue('#f-lot')) === 'TEST123');
+  check('바코드 제조번호 표시(읽기 전용)', (await page.inputValue('#f-barcodeLot')) === 'TEST123' &&
+    (await page.getAttribute('#f-barcodeLot', 'readonly')) !== null);
+  check('포장 확인 제조번호는 비어 있음', (await page.inputValue('#f-lot')) === '');
+  await page.fill('#f-lot', 'TEST999');
+  check('포장 확인값이 다르면 불일치 안내', await page.isVisible('#lot-mismatch'));
+  await page.fill('#f-lot', '');
+  check('포장 확인값을 지우면 안내 숨김', !(await page.isVisible('#lot-mismatch')));
   check('사용기한 자동 채움', (await page.inputValue('#f-expiry')) === '2027-12-31');
   check('최근 공급처 자동 채움', (await page.inputValue('#f-supplier')) === '지오영');
   await page.fill('#f-name', '테스트정');
@@ -365,7 +371,7 @@ async function photoDecode(browser) {
     // 회귀: 일련번호(21)만 있으면 제조번호를 채우지 않고, (10)이 있으면 그 값만 채운다
     const lotWant = { 'gs1-datamatrix-serial-only': '', 'gs1-datamatrix-lot-serial': '6020' }[s.file];
     if (lotWant !== undefined) {
-      const lot = await page.inputValue('#f-lot');
+      const lot = await page.inputValue('#f-barcodeLot');
       const exp = await page.inputValue('#f-expiry');
       check(s.file + ' 입력란: 제조번호 "' + lot + '", 사용기한 ' + exp, lot === lotWant && exp === '2029-06-22', { lotWant });
       const diag = await page.textContent('#scan-diag-body');

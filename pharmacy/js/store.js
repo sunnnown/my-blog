@@ -5,9 +5,15 @@
  * {
  *   version: 1,
  *   products: [{ id, key, gtin, barcode, format, name, manufacturer, packUnit, it3000Box, createdAt, updatedAt }],
- *   receipts: [{ id, productId, supplier, receivedDate, quantity, unit, lot, expiry, memo,
+ *   receipts: [{ id, productId, supplier, receivedDate, quantity, unit, lot, barcodeLot, expiry, memo,
  *                scan: { raw, format, source }, confirmedAt, createdAt, updatedAt }]
  * }
+ *
+ * 제조번호는 두 값을 따로 보관한다.
+ * - barcodeLot: 바코드 (10)에서 경계가 확실하게 읽힌 값. 저장할 때 스캔 결과에서만 정하고 수정하지 않는다.
+ *               (이 필드가 생기기 전의 기록에는 없다)
+ * - lot:        사람이 포장 인쇄를 보고 확인한 값. 비어 있으면 바코드 값과 같다고 본다.
+ * 화면·검색·CSV에는 effectiveLot()(lot이 있으면 lot, 없으면 barcodeLot)을 쓴다.
  *
  * 약품(products)과 입고 기록(receipts)을 분리해, 같은 약품의 여러 입고(공급처·입고일이 다른)를
  * 각각 별도 기록으로 남긴다. 재고 수량은 계산·저장하지 않는다.
@@ -59,6 +65,16 @@
 
   function clean(v) {
     return v == null ? '' : String(v).trim();
+  }
+
+  // 기록에 쓸 제조번호: 포장 확인값 우선, 없으면 바코드 값
+  function effectiveLot(r) {
+    return clean(r.lot) || clean(r.barcodeLot);
+  }
+
+  // 바코드 값과 포장 확인값이 둘 다 있고 서로 다를 때
+  function lotMismatch(r) {
+    return !!(clean(r.lot) && clean(r.barcodeLot) && clean(r.lot) !== clean(r.barcodeLot));
   }
 
   // ---- 약품 ----
@@ -168,6 +184,7 @@
     var r = Object.assign({
       id: newId(),
       productId: product.id,
+      barcodeLot: clean(scan.lot),
       scan: { raw: scan.raw, format: scan.formatLabel, source: scan.source },
       confirmedAt: t,
       createdAt: t,
@@ -224,7 +241,7 @@
         if (filter.to && r.receivedDate > filter.to) return false;
         if (!terms.length) return true;
         var hay = [p.name, p.manufacturer, p.packUnit, p.it3000Box, p.gtin, p.barcode,
-          r.supplier, r.lot, r.memo, r.scan && r.scan.raw].join(' ').toLowerCase();
+          r.supplier, r.lot, r.barcodeLot, r.memo, r.scan && r.scan.raw].join(' ').toLowerCase();
         return terms.every(function (t) { return hay.indexOf(t) !== -1; });
       })
       .sort(function (a, b) {
@@ -319,6 +336,8 @@
 
   var api = {
     STORAGE_KEY: STORAGE_KEY,
+    effectiveLot: effectiveLot,
+    lotMismatch: lotMismatch,
     load: load,
     findProductByKey: findProductByKey,
     getProduct: getProduct,
